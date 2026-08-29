@@ -6,7 +6,7 @@ struct ConvertView: View {
     @StateObject private var vm = ConvertViewModel()
     @State private var showSignStampPrompt = false
     @State private var showSignStampEditor = false
-    @State private var showExport = false
+    @State private var isExporting = false
 
     var body: some View {
         NavigationView {
@@ -58,21 +58,17 @@ struct ConvertView: View {
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         vm.processedDocument = updated
                         appState.addDocument(updated, images: signed, signed: true)
-                        showExport = true
                     }
-                }
-            }
-            .sheet(isPresented: $showExport) {
-                if let doc = vm.processedDocument {
-                    ExportView(document: doc, images: vm.pages, initialFormat: vm.outputFormat)
                 }
             }
             .alert("Sign & Stamp?", isPresented: $showSignStampPrompt) {
                 Button("Sign / Stamp", action: AppAnalytics.action("convert_prompt_sign") { showSignStampEditor = true })
-                Button("Download", action: AppAnalytics.action("convert_prompt_download") { showExport = true })
+                Button("Save as \(vm.outputFormat.rawValue)", action: AppAnalytics.action("convert_prompt_download") {
+                    Task { await exportConverted(format: vm.outputFormat) }
+                })
                 Button("Cancel", role: .cancel, action: AppAnalytics.action("convert_prompt_cancel") {})
             } message: {
-                Text("Add a signature, stamp, or date before saving, or download the converted document as-is.")
+                Text("Add a signature, stamp, or date before saving, or save the converted document as-is.")
             }
             .alert("Error", isPresented: $vm.showError) {
                 Button("OK", role: .cancel, action: AppAnalytics.action("convert_error_ok") {})
@@ -86,6 +82,8 @@ struct ConvertView: View {
             .overlay {
                 if vm.isProcessing {
                     processingOverlay
+                } else if isExporting {
+                    ExportingOverlay()
                 }
             }
         }
@@ -93,7 +91,7 @@ struct ConvertView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Change any file into PDF, Word, Excel, or images. Then sign it, or just download.")
+            Text("Change any file into PDF, Word, Excel, or images. Then sign it, or export it.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
@@ -254,7 +252,7 @@ struct ConvertView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
-            Text("\(doc.pageCount) page(s) converted to \(vm.outputFormat.rawValue). Sign and stamp it first, or download it now.")
+            Text("\(doc.pageCount) page(s) converted to \(vm.outputFormat.rawValue). Sign and stamp it first, or export it now.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
 
@@ -278,23 +276,32 @@ struct ConvertView: View {
                     .cornerRadius(14)
             }
 
-            Button {
-                AppAnalytics.tap("convert_download")
-                showExport = true
-            } label: {
-                Label("Download", systemImage: "square.and.arrow.down")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color.blue)
-                    .cornerRadius(14)
+            ExportFormatRow(isEnabled: !isExporting) { format in
+                AppAnalytics.tap("convert_export_format", ["format": format.rawValue])
+                Task { await exportConverted(format: format) }
             }
         }
         .padding()
         .background(Color(.systemBackground))
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+    }
+
+    private func exportConverted(format: ExportFormat) async {
+        guard let doc = vm.processedDocument else { return }
+        isExporting = true
+        do {
+            try await appState.exportAndReveal(
+                doc,
+                format: format,
+                images: vm.pages,
+                preferExistingImages: true
+            )
+        } catch {
+            vm.errorMessage = error.localizedDescription
+            vm.showError = true
+        }
+        isExporting = false
     }
 
     private var processingOverlay: some View {

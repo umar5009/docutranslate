@@ -254,7 +254,11 @@ struct SavedExportAlert: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.5).ignoresSafeArea()
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onOK)
+
             VStack(spacing: 18) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 56))
@@ -270,13 +274,17 @@ struct SavedExportAlert: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
-                Button("OK", action: onOK)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color(.systemGray5))
-                    .cornerRadius(12)
+                Button(action: onOK) {
+                    Text("OK")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color(.systemGray5))
+                        .cornerRadius(12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             .padding(24)
             .background(
@@ -285,7 +293,11 @@ struct SavedExportAlert: View {
             )
             .shadow(color: .black.opacity(0.28), radius: 24, y: 10)
             .padding(.horizontal, 36)
+            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .onTapGesture { } // keep taps on the card from hitting the dimmer
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
         .accessibilityLabel("\(result.userMessage). \(result.detailMessage)")
@@ -329,16 +341,19 @@ struct ScanTranslateView: View {
                     if let result = tvm.translationResult {
                         TranslatedDocumentPreview(
                             document: result,
-                            scannedImages: vm.session.pages.map(\.displayImage),
-                            onExport: {
-                                AppAnalytics.tap("scan_translate_export")
-                                tvm.showExportSheet = true
-                            },
+                            scannedImages: ExportService.shared.imagesForSigning(
+                                result,
+                                existing: vm.session.pages.map(\.displayImage)
+                            ),
                             onSignStamp: {
                                 AppAnalytics.tap("scan_translate_sign")
                                 showSignStampEditor = true
                             }
                         )
+                        ExportFormatRow(isEnabled: !isExporting) { format in
+                            AppAnalytics.tap("scan_translate_export_format", ["format": format.rawValue])
+                            Task { await exportTranslated(result, format: format) }
+                        }
                     } else if extracting || tvm.isTranslating {
                         translatingPlaceholder
                     }
@@ -363,7 +378,11 @@ struct ScanTranslateView: View {
                             doc.fileName = "Scanned_Document"
                             tvm.translationResult = doc
                             tvm.translatedDocument = doc
-                            appState.addDocument(doc, images: vm.session.pages.map(\.displayImage))
+                            let translatedPages = ExportService.shared.imagesForSigning(
+                                doc,
+                                existing: vm.session.pages.map(\.displayImage)
+                            )
+                            appState.addDocument(doc, images: translatedPages)
                             showSignStampPrompt = true
                         }
                         extracting = false
@@ -393,17 +412,14 @@ struct ScanTranslateView: View {
             .overlay {
                 if tvm.isTranslating {
                     TranslationProgressView(vm: tvm)
+                } else if isExporting {
+                    ExportingOverlay()
                 }
             }
             .alert("Error", isPresented: $tvm.showError) {
                 Button("OK", role: .cancel, action: AppAnalytics.action("scan_translate_error_ok") {})
             } message: {
                 Text(tvm.errorMessage)
-            }
-            .sheet(isPresented: $tvm.showExportSheet) {
-                if let d = tvm.translatedDocument {
-                    ExportView(document: d, images: vm.session.pages.map(\.displayImage))
-                }
             }
             .alert("Sign & Stamp", isPresented: $showSignStampPrompt) {
                 Button("Sign / Stamp", action: AppAnalytics.action("scan_translate_prompt_sign") { showSignStampEditor = true })
@@ -416,10 +432,9 @@ struct ScanTranslateView: View {
                     SignStampEditorView(
                         pages: ExportService.shared.imagesForSigning(
                             doc,
-                            existing: vm.session.pages.map(\.displayImage),
-                            preferExisting: true
+                            existing: vm.session.pages.map(\.displayImage)
                         ),
-                        pageIndex: vm.currentPageIndex ?? 0,
+                        pageIndex: 0,
                         documentID: doc.id,
                         onBrandingRemoved: {
                             var updated = doc
@@ -439,6 +454,22 @@ struct ScanTranslateView: View {
             }
             .background(AppleTranslationHook())
         }
+    }
+
+    private func exportTranslated(_ document: TranslatedDocument, format: ExportFormat) async {
+        isExporting = true
+        do {
+            try await appState.exportAndReveal(
+                document,
+                format: format,
+                images: vm.session.pages.map(\.displayImage)
+            )
+            dismiss()
+        } catch {
+            tvm.errorMessage = error.localizedDescription
+            tvm.showError = true
+        }
+        isExporting = false
     }
 
     private var translatingPlaceholder: some View {
@@ -496,6 +527,8 @@ struct DocumentPickerView: UIViewControllerRepresentable {
          UTType(filenameExtension: "txt")  ?? .data,
          UTType(filenameExtension: "rtf")  ?? .data,
          UTType(filenameExtension: "md")   ?? .data,
+         UTType(filenameExtension: "svg")  ?? .data,
+         UTType(filenameExtension: "xml")  ?? .data,
         ]
     }
 

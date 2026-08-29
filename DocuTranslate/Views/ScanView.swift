@@ -72,11 +72,6 @@ struct ScanView: View {
             .onChange(of: vm.photoPickerItems) { items in
                 Task { await vm.loadPhotos(from: items) }
             }
-            .alert("Saved", isPresented: $vm.showExportSuccess) {
-                Button("OK", role: .cancel, action: AppAnalytics.action("scan_export_ok") {})
-            } message: {
-                Text(vm.exportSuccessMessage)
-            }
             .alert("Export Failed", isPresented: $vm.showExportError) {
                 Button("OK", role: .cancel, action: AppAnalytics.action("scan_export_error_ok") {})
             } message: {
@@ -468,7 +463,11 @@ struct ScanView: View {
                 .confirmationDialog("Export As", isPresented: $vm.showExportOptions) {
                     ForEach(ExportFormat.allCases) { fmt in
                         Button(fmt.rawValue, action: AppAnalytics.action("scan_export_format", ["format": fmt.rawValue]) {
-                            Task { await vm.export(as: fmt) }
+                            Task {
+                                if let (doc, result) = await vm.export(as: fmt) {
+                                    appState.revealSavedDocument(doc, export: result)
+                                }
+                            }
                         })
                     }
                     Button("Cancel", role: .cancel, action: AppAnalytics.action("scan_export_cancel") {})

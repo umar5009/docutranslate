@@ -70,10 +70,44 @@ struct HistoryView: View {
                     images: appState.images(for: doc)
                 )
             }
-            .sheet(item: $exportingDocument) { doc in
+            .sheet(item: $exportingDocument, onDismiss: { consumePendingPreview() }) { doc in
                 ExportView(document: doc, images: appState.images(for: doc))
             }
+            .onAppear { consumePendingPreview() }
+            .onChange(of: appState.documentToPreview?.id) { _, _ in
+                consumePendingPreview()
+            }
+            .onChange(of: appState.currentTab) { _, tab in
+                if tab == .history { consumePendingPreview() }
+            }
+            .onChange(of: appState.lastSavedExport?.fileName) { _, _ in
+                consumePendingPreview()
+            }
+            .fullScreenCover(isPresented: Binding(
+                get: { appState.lastSavedExport != nil && viewingDocument == nil },
+                set: { if !$0 { dismissSavedExport() } }
+            )) {
+                if let saved = appState.lastSavedExport {
+                    SavedExportAlert(result: saved) {
+                        AppAnalytics.tap("export_success_ok")
+                        dismissSavedExport()
+                    }
+                    .presentationBackground(.clear)
+                }
+            }
         }
+    }
+
+    private func dismissSavedExport() {
+        appState.lastSavedExport = nil
+        consumePendingPreview()
+    }
+
+    private func consumePendingPreview() {
+        guard appState.lastSavedExport == nil else { return }
+        guard let doc = appState.documentToPreview else { return }
+        viewingDocument = doc
+        appState.documentToPreview = nil
     }
 
     private var emptyState: some View {
@@ -342,12 +376,16 @@ struct HistoryDocumentViewer: View {
                     pagePreview
                 }
             }
+            .allowsHitTesting(appState.lastSavedExport == nil)
             .background(Color(.systemGroupedBackground))
             .navigationTitle(document.fileName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done", action: AppAnalytics.action("history_viewer_done") { dismiss() })
+                    Button("Done", action: AppAnalytics.action("history_viewer_done") {
+                        appState.lastSavedExport = nil
+                        dismiss()
+                    })
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 12) {
@@ -370,6 +408,14 @@ struct HistoryDocumentViewer: View {
             }
             .sheet(isPresented: $showExport) {
                 ExportView(document: liveDocument, images: images)
+            }
+        }
+        .overlay {
+            if let saved = appState.lastSavedExport {
+                SavedExportAlert(result: saved) {
+                    AppAnalytics.tap("export_success_ok")
+                    appState.lastSavedExport = nil
+                }
             }
         }
     }
@@ -408,7 +454,7 @@ struct HistoryDocumentViewer: View {
                     Text("Translated")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
-                    Text(document.translatedText)
+                    Text(DocumentPageBreak.displayText(document.translatedText))
                         .font(.body)
                         .textSelection(.enabled)
                 }
@@ -416,7 +462,7 @@ struct HistoryDocumentViewer: View {
                     Text("Original")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
-                    Text(document.originalText)
+                    Text(DocumentPageBreak.displayText(document.originalText))
                         .font(.body)
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)

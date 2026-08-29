@@ -3,10 +3,10 @@ import SwiftUI
 struct TranslatedDocumentPreview: View {
     let document: TranslatedDocument
     var scannedImages: [UIImage] = []
-    var onExport: (() -> Void)?
     var onSignStamp: (() -> Void)?
 
     @State private var selectedTab: PreviewTab = .translated
+    @State private var previewPage = 0
 
     enum PreviewTab: String, CaseIterable {
         case original = "Original"
@@ -19,30 +19,18 @@ struct TranslatedDocumentPreview: View {
             languageRoute
             tabPicker
             documentPage
-            if onExport != nil || onSignStamp != nil {
-                VStack(spacing: 10) {
-                    if let onSignStamp {
-                        Button(action: onSignStamp) {
-                            Label("Sign / Stamp", systemImage: "signature")
-                                .font(.headline)
-                                .foregroundColor(.blue)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color.blue.opacity(0.12))
-                                .cornerRadius(14)
-                        }
-                    }
-                    if let onExport {
-                        Button(action: onExport) {
-                            Label("Export Document", systemImage: "square.and.arrow.up")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color.blue)
-                                .cornerRadius(14)
-                        }
-                    }
+            if pageCount > 1 {
+                pageNavigator
+            }
+            if let onSignStamp {
+                Button(action: onSignStamp) {
+                    Label("Sign / Stamp", systemImage: "signature")
+                        .font(.headline)
+                        .foregroundColor(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.blue.opacity(0.12))
+                        .cornerRadius(14)
                 }
             }
         }
@@ -50,6 +38,9 @@ struct TranslatedDocumentPreview: View {
         .background(Color(.systemBackground))
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+        .onChange(of: document.id) { _, _ in
+            previewPage = 0
+        }
     }
 
     private var headerBar: some View {
@@ -119,11 +110,9 @@ struct TranslatedDocumentPreview: View {
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Spacer()
-                if !scannedImages.isEmpty {
-                    Text("\(scannedImages.count) pg")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
+                Text("\(previewPage + 1)/\(pageCount) pg")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -131,12 +120,11 @@ struct TranslatedDocumentPreview: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if selectedTab == .translated, let firstImage = scannedImages.first {
-                        Image(uiImage: firstImage)
+                    if selectedTab == .translated, let pageImage = currentPreviewImage {
+                        Image(uiImage: pageImage)
                             .resizable()
                             .scaledToFit()
                             .cornerRadius(8)
-                            .opacity(0.35)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
                                     .strokeBorder(Color(.systemGray4), lineWidth: 1)
@@ -158,12 +146,56 @@ struct TranslatedDocumentPreview: View {
         .shadow(color: .black.opacity(0.04), radius: 4, y: 2)
     }
 
+    private var pageCount: Int {
+        max(
+            document.pageCount,
+            document.translatedPageTexts.count,
+            document.originalPageTexts.count,
+            scannedImages.count,
+            1
+        )
+    }
+
+    private var currentPreviewImage: UIImage? {
+        guard previewPage < scannedImages.count else { return scannedImages.first }
+        return scannedImages[previewPage]
+    }
+
     private var currentText: String {
-        selectedTab == .translated ? document.translatedText : document.originalText
+        let pages = selectedTab == .translated ? document.translatedPageTexts : document.originalPageTexts
+        if previewPage < pages.count {
+            return DocumentPageBreak.displayText(pages[previewPage])
+        }
+        return DocumentPageBreak.displayText(selectedTab == .translated ? document.translatedText : document.originalText)
+    }
+
+    private var pageNavigator: some View {
+        HStack(spacing: 16) {
+            Button {
+                previewPage = max(previewPage - 1, 0)
+            } label: {
+                Image(systemName: "chevron.left.circle.fill")
+                    .font(.title3)
+            }
+            .disabled(previewPage <= 0)
+
+            Text("Page \(previewPage + 1) of \(pageCount)")
+                .font(.subheadline.weight(.semibold))
+
+            Button {
+                previewPage = min(previewPage + 1, pageCount - 1)
+            } label: {
+                Image(systemName: "chevron.right.circle.fill")
+                    .font(.title3)
+            }
+            .disabled(previewPage >= pageCount - 1)
+        }
+        .foregroundColor(.blue)
+        .frame(maxWidth: .infinity)
     }
 
     private var wordCount: Int {
-        document.translatedText.split(whereSeparator: \.isWhitespace).count
+        DocumentPageBreak.displayText(document.translatedText).split(whereSeparator: \.isWhitespace).count
     }
 
     @ViewBuilder

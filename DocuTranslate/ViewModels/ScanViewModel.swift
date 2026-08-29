@@ -15,9 +15,7 @@ class ScanViewModel: ObservableObject {
     @Published var showSignStampEditor = false
     @Published var showExportOptions = false
     @Published var showActionSheet = false
-    @Published var showExportSuccess = false
     @Published var showExportError = false
-    @Published var exportSuccessMessage = ""
     @Published var exportErrorMessage = ""
 
     @Published var editingPageIndex: Int?
@@ -152,20 +150,26 @@ class ScanViewModel: ObservableObject {
 
     // MARK: - OCR
 
-    func extractAllText() async -> String {
-        var all = ""
+    func extractPageTexts() async -> [String] {
+        var pages: [String] = []
+        pages.reserveCapacity(session.pages.count)
         for page in session.pages {
-            if let text = try? await proc.extractText(from: page.displayImage), !text.isEmpty {
-                all += text + "\n\n"
-            }
+            let text = (try? await proc.extractText(from: page.displayImage)) ?? ""
+            pages.append(text)
         }
-        return all
+        return pages
+    }
+
+    func extractAllText() async -> String {
+        DocumentPageBreak.join(await extractPageTexts())
     }
 
     // MARK: - Export
 
-    func export(as format: ExportFormat) async {
+    func export(as format: ExportFormat) async -> (TranslatedDocument, ExportService.SavedExport)? {
+        let images = session.pages.map(\.displayImage)
         let doc = TranslatedDocument(
+            id: session.id,
             fileName: "Scanned_Document",
             originalLanguage: Language.all.first(where: { $0.id == "en" })!,
             targetLanguage: Language.all.first(where: { $0.id == "en" })!,
@@ -174,20 +178,19 @@ class ScanViewModel: ObservableObject {
             originalText: "",
             pageCount: session.pages.count
         )
-        let images = session.pages.map(\.displayImage)
         do {
             let result = try await ExportService.shared.exportAndSave(
                 document: doc,
                 as: format,
                 scannedImages: images
             )
-            exportSuccessMessage = result.detailMessage
-            showExportSuccess = true
-            persistToHistory(signed: false, images: images)
+            HistoryStore.shared.add(doc, images: images, signed: false)
             ReviewPromptService.shared.considerPrompt(after: "scan_export")
+            return (doc, result)
         } catch {
             exportErrorMessage = error.localizedDescription
             showExportError = true
+            return nil
         }
     }
 
