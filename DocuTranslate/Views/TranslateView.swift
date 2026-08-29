@@ -295,6 +295,7 @@ struct TranslateView: View {
         VStack(spacing: 12) {
             TranslatedDocumentPreview(
                 document: result,
+                scannedImages: ExportService.shared.imagesForSigning(result, existing: vm.exportImages),
                 onSignStamp: {
                     AppAnalytics.tap("translate_sign_stamp")
                     showSignStampEditor = true

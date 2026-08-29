@@ -254,7 +254,11 @@ struct SavedExportAlert: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.5).ignoresSafeArea()
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onOK)
+
             VStack(spacing: 18) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 56))
@@ -270,13 +274,17 @@ struct SavedExportAlert: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
-                Button("OK", action: onOK)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(Color(.systemGray5))
-                    .cornerRadius(12)
+                Button(action: onOK) {
+                    Text("OK")
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color(.systemGray5))
+                        .cornerRadius(12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             .padding(24)
             .background(
@@ -285,7 +293,11 @@ struct SavedExportAlert: View {
             )
             .shadow(color: .black.opacity(0.28), radius: 24, y: 10)
             .padding(.horizontal, 36)
+            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .onTapGesture { } // keep taps on the card from hitting the dimmer
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
         .accessibilityLabel("\(result.userMessage). \(result.detailMessage)")
@@ -329,7 +341,10 @@ struct ScanTranslateView: View {
                     if let result = tvm.translationResult {
                         TranslatedDocumentPreview(
                             document: result,
-                            scannedImages: vm.session.pages.map(\.displayImage),
+                            scannedImages: ExportService.shared.imagesForSigning(
+                                result,
+                                existing: vm.session.pages.map(\.displayImage)
+                            ),
                             onSignStamp: {
                                 AppAnalytics.tap("scan_translate_sign")
                                 showSignStampEditor = true
@@ -363,7 +378,11 @@ struct ScanTranslateView: View {
                             doc.fileName = "Scanned_Document"
                             tvm.translationResult = doc
                             tvm.translatedDocument = doc
-                            appState.addDocument(doc, images: vm.session.pages.map(\.displayImage))
+                            let translatedPages = ExportService.shared.imagesForSigning(
+                                doc,
+                                existing: vm.session.pages.map(\.displayImage)
+                            )
+                            appState.addDocument(doc, images: translatedPages)
                             showSignStampPrompt = true
                         }
                         extracting = false
@@ -413,10 +432,9 @@ struct ScanTranslateView: View {
                     SignStampEditorView(
                         pages: ExportService.shared.imagesForSigning(
                             doc,
-                            existing: vm.session.pages.map(\.displayImage),
-                            preferExisting: true
+                            existing: vm.session.pages.map(\.displayImage)
                         ),
-                        pageIndex: vm.currentPageIndex ?? 0,
+                        pageIndex: 0,
                         documentID: doc.id,
                         onBrandingRemoved: {
                             var updated = doc
@@ -444,8 +462,7 @@ struct ScanTranslateView: View {
             try await appState.exportAndReveal(
                 document,
                 format: format,
-                images: vm.session.pages.map(\.displayImage),
-                preferExistingImages: true
+                images: vm.session.pages.map(\.displayImage)
             )
             dismiss()
         } catch {

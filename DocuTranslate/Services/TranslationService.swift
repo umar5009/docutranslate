@@ -86,6 +86,61 @@ class TranslationService: ObservableObject {
         return TranslationMarkupGuard.restore(result, tokens: tokens)
     }
 
+    /// Translates each page on its own so multi-page documents keep one translated page per original page.
+    func translatePages(
+        _ pages: [String],
+        from sourceLang: Language,
+        to targetLang: Language,
+        detectSource: Bool = false,
+        progressHandler: @escaping (TranslationStep) -> Void
+    ) async throws -> [String] {
+        guard !pages.isEmpty else { return [] }
+        if pages.count == 1 {
+            return [try await translate(
+                text: pages[0],
+                from: sourceLang,
+                to: targetLang,
+                detectSource: detectSource,
+                progressHandler: progressHandler
+            )]
+        }
+
+        progressHandler(.translating)
+        var results: [String] = []
+        results.reserveCapacity(pages.count)
+        var resolvedSource = sourceLang
+        var didDetect = false
+
+        for (index, page) in pages.enumerated() {
+            let trimmed = page.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                results.append("")
+                continue
+            }
+
+            let shouldDetect = detectSource && !didDetect
+            let translated = try await translate(
+                text: page,
+                from: resolvedSource,
+                to: targetLang,
+                detectSource: shouldDetect,
+                progressHandler: { _ in }
+            )
+            if shouldDetect {
+                if let detected = detectLanguage(in: page) {
+                    resolvedSource = detected
+                }
+                didDetect = true
+            }
+            results.append(translated)
+            progress = Double(index + 1) / Double(pages.count)
+            progressHandler(.translating)
+        }
+
+        progressHandler(.formatting)
+        return results
+    }
+
     // MARK: - Online engines
 
     private func translateOnline(
@@ -362,6 +417,10 @@ enum TranslationMarkupGuard {
     static func protect(_ text: String) -> (String, [String]) {
         var tokens: [String] = []
         var working = text
+        if working.contains(DocumentPageBreak.marker) {
+            tokens.append(DocumentPageBreak.marker)
+            working = working.replacingOccurrences(of: DocumentPageBreak.marker, with: marker(tokens.count - 1))
+        }
         working = replace(pattern: #"<!\[CDATA\[.*?\]\]>"#, in: working, tokens: &tokens, dotAll: true)
         working = replace(pattern: #"<[^>]+>"#, in: working, tokens: &tokens)
         working = replace(pattern: #"\b[\w:.-]+=(?:"[^"]*"|'[^']*')"#, in: working, tokens: &tokens)

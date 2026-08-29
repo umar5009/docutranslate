@@ -58,6 +58,10 @@ class TranslateViewModel: ObservableObject {
                 throw TranslationError.emptyText
             }
 
+            var pageTexts = DocumentPageBreak.split(text)
+            if pageTexts.isEmpty { pageTexts = [text] }
+            pageCount = max(pageCount, pageTexts.count)
+
             if autoDetect {
                 currentStep = .detecting
                 translationProgress = 0.3
@@ -66,16 +70,32 @@ class TranslateViewModel: ObservableObject {
                 }
             }
 
-            let translated = try await svc.translate(
-                text: text,
-                from: sourceLanguage,
-                to: targetLanguage,
-                detectSource: autoDetect
-            ) { [weak self] step in
+            let progressHandler: (TranslationStep) -> Void = { [weak self] step in
                 Task { @MainActor [weak self] in
                     self?.currentStep = step
                     self?.translationProgress = step.progress
                 }
+            }
+
+            let translated: String
+            if pageTexts.count > 1 {
+                let translatedPages = try await svc.translatePages(
+                    pageTexts,
+                    from: sourceLanguage,
+                    to: targetLanguage,
+                    detectSource: false,
+                    progressHandler: progressHandler
+                )
+                translated = DocumentPageBreak.join(translatedPages)
+                pageCount = max(pageCount, translatedPages.count)
+            } else {
+                translated = try await svc.translate(
+                    text: text,
+                    from: sourceLanguage,
+                    to: targetLanguage,
+                    detectSource: autoDetect,
+                    progressHandler: progressHandler
+                )
             }
 
             currentStep = .complete

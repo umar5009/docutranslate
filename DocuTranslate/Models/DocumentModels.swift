@@ -269,6 +269,31 @@ enum ScanEditorTab: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Page breaks (kept through translation so every page stays distinct)
+
+enum DocumentPageBreak {
+    static let marker = "<<<DT_PAGE>>>"
+
+    static func join(_ pages: [String]) -> String {
+        guard pages.count > 1 else { return pages.first ?? "" }
+        return pages.joined(separator: "\n\(marker)\n")
+    }
+
+    static func split(_ text: String) -> [String] {
+        guard text.contains(marker) else {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [text]
+        }
+        return text.components(separatedBy: marker).map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    static func displayText(_ text: String) -> String {
+        let pages = split(text)
+        return pages.isEmpty ? text : pages.joined(separator: "\n\n")
+    }
+}
+
 // MARK: - Translated Document
 
 struct TranslatedDocument: Identifiable, Codable {
@@ -305,6 +330,16 @@ struct TranslatedDocument: Identifiable, Codable {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: createdAt)
+    }
+
+    var translatedPageTexts: [String] {
+        let pages = DocumentPageBreak.split(translatedText)
+        return pages.isEmpty ? [translatedText] : pages
+    }
+
+    var originalPageTexts: [String] {
+        let pages = DocumentPageBreak.split(originalText)
+        return pages.isEmpty ? [originalText] : pages
     }
 }
 

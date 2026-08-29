@@ -150,14 +150,18 @@ class ScanViewModel: ObservableObject {
 
     // MARK: - OCR
 
-    func extractAllText() async -> String {
-        var all = ""
+    func extractPageTexts() async -> [String] {
+        var pages: [String] = []
+        pages.reserveCapacity(session.pages.count)
         for page in session.pages {
-            if let text = try? await proc.extractText(from: page.displayImage), !text.isEmpty {
-                all += text + "\n\n"
-            }
+            let text = (try? await proc.extractText(from: page.displayImage)) ?? ""
+            pages.append(text)
         }
-        return all
+        return pages
+    }
+
+    func extractAllText() async -> String {
+        DocumentPageBreak.join(await extractPageTexts())
     }
 
     // MARK: - Export

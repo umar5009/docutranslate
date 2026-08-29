@@ -47,9 +47,9 @@ class AppState: ObservableObject {
     func revealSavedDocument(_ document: TranslatedDocument, export: ExportService.SavedExport) {
         lastSavedExport = export
         currentTab = .history
-        DispatchQueue.main.async {
-            self.documentToPreview = document
-        }
+        // Keep the document queued until the user taps OK so the success alert
+        // is not covered by the preview sheet (which was swallowing the OK tap).
+        documentToPreview = document
     }
 
     func exportAndReveal(
