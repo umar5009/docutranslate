@@ -55,6 +55,7 @@ struct ConvertView: View {
                     ) { signed in
                         vm.pages = signed
                         var updated = vm.processedDocument ?? doc
+                        updated.wasSigned = true
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         vm.processedDocument = updated
                         appState.addDocument(updated, images: signed, signed: true)

@@ -11,7 +11,7 @@ struct SettingsView: View {
 
     @State private var showSourcePicker = false
     @State private var showTargetPicker = false
-    @State private var sourceLanguage = Language.all.first(where: { $0.code == "en" })!
+    @State private var sourceLanguage = Language.english
     @State private var targetLanguage = Language.all.first(where: { $0.code == "pl" })!
     @State private var showAbout = false
     @ObservedObject private var push = PushNotificationService.shared
@@ -232,11 +232,18 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Link(destination: URL(string: "https://www.apple.com/legal/privacy/")!) {
+                    Link(destination: URL(string: "https://github.com/umar5009/docutranslate-privacy-support-page/blob/main/PRIVACY.md")!) {
                         SettingsRow(icon: "hand.raised.fill", iconColor: .gray, title: "Privacy Policy", value: "")
                     }
                     .simultaneousGesture(TapGesture().onEnded {
                         AppAnalytics.tap("settings_privacy")
+                    })
+
+                    Link(destination: URL(string: "https://github.com/umar5009/docutranslate-privacy-support-page/blob/main/SUPPORT.md")!) {
+                        SettingsRow(icon: "questionmark.circle.fill", iconColor: .teal, title: "Support", value: "")
+                    }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        AppAnalytics.tap("settings_support")
                     })
                 } header: {
                     Text("About")

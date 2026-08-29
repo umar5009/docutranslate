@@ -25,6 +25,7 @@ class TranslateViewModel: ObservableObject {
     @Published var showError = false
     @Published var errorMessage = ""
     @Published var exportImages: [UIImage] = []
+    @Published var statusDetail: String = ""
 
     private let svc = TranslationService.shared
     private let proc = DocumentProcessor.shared
@@ -40,7 +41,11 @@ class TranslateViewModel: ObservableObject {
         isTranslating = true
         translationProgress = 0
         currentStep = .uploading
-        defer { isTranslating = false }
+        statusDetail = ""
+        defer {
+            isTranslating = false
+            statusDetail = ""
+        }
 
         do {
             var text = inputText
@@ -70,11 +75,10 @@ class TranslateViewModel: ObservableObject {
                 }
             }
 
-            let progressHandler: (TranslationStep) -> Void = { [weak self] step in
-                Task { @MainActor [weak self] in
-                    self?.currentStep = step
-                    self?.translationProgress = step.progress
-                }
+            let progressHandler: (TranslationStep, Double) -> Void = { [weak self] step, fraction in
+                self?.currentStep = step
+                self?.translationProgress = fraction
+                self?.statusDetail = self?.svc.statusDetail ?? ""
             }
 
             let translated: String

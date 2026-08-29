@@ -19,7 +19,9 @@ struct TranslationProgressView: View {
                 }
                 VStack(spacing: 6) {
                     Text(vm.currentStep.rawValue).font(.headline)
-                    Text("Please wait…").font(.subheadline).foregroundColor(.secondary)
+                    Text(vm.statusDetail.isEmpty ? "Please wait…" : vm.statusDetail)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
                 VStack(spacing: 6) {
                     ProgressView(value: vm.translationProgress)
@@ -446,8 +448,10 @@ struct ScanTranslateView: View {
                             vm.session.pages[i].processedImage = signed[i]
                         }
                         var updated = tvm.translatedDocument ?? doc
+                        updated.wasSigned = true
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         tvm.translatedDocument = updated
+                        tvm.translationResult = updated
                         appState.addDocument(updated, images: signed, signed: true)
                     }
                 }
@@ -460,7 +464,7 @@ struct ScanTranslateView: View {
         isExporting = true
         do {
             try await appState.exportAndReveal(
-                document,
+                tvm.translatedDocument ?? document,
                 format: format,
                 images: vm.session.pages.map(\.displayImage)
             )

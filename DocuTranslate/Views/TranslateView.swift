@@ -55,8 +55,10 @@ struct TranslateView: View {
                     ) { signed in
                         vm.exportImages = signed
                         var updated = vm.translatedDocument ?? doc
+                        updated.wasSigned = true
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         vm.translatedDocument = updated
+                        vm.translationResult = updated
                         appState.addDocument(updated, images: signed, signed: true)
                     }
                 }
@@ -311,7 +313,11 @@ struct TranslateView: View {
     private func exportTranslated(_ document: TranslatedDocument, format: ExportFormat) async {
         isExporting = true
         do {
-            try await appState.exportAndReveal(document, format: format, images: vm.exportImages)
+            try await appState.exportAndReveal(
+                vm.translatedDocument ?? document,
+                format: format,
+                images: vm.exportImages
+            )
         } catch {
             vm.errorMessage = error.localizedDescription
             vm.showError = true

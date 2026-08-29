@@ -13,8 +13,10 @@ class TranslationService: ObservableObject {
     @Published var progress: Double = 0
     @Published var currentStep: TranslationStep = .uploading
     @Published var errorMessage: String?
+    @Published var statusDetail: String = ""
 
     static let shared = TranslationService()
+    private var skipOnDevice = false
     private init() {}
 
     // MARK: - Language Detection
@@ -36,9 +38,9 @@ class TranslationService: ObservableObject {
         from sourceLang: Language,
         to targetLang: Language,
         detectSource: Bool = false,
-        progressHandler: @escaping (TranslationStep) -> Void
+        progressHandler: @escaping (TranslationStep, Double) -> Void
     ) async throws -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = decodeIfPercentEncoded(text.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !trimmed.isEmpty else { throw TranslationError.emptyText }
 
         if !detectSource, sourceLang.id == targetLang.id {
@@ -51,10 +53,11 @@ class TranslationService: ObservableObject {
             return trimmed
         }
 
-        progressHandler(.translating)
+        statusDetail = "Starting translation…"
+        report(.translating, 0.42, progressHandler)
 
         #if canImport(Translation)
-        if #available(iOS 18.0, *) {
+        if #available(iOS 18.0, *), !skipOnDevice {
             do {
                 let result = try await AppleTranslationRuntime.shared.translate(
                     masked,
@@ -62,14 +65,18 @@ class TranslationService: ObservableObject {
                     to: targetLang,
                     detectSource: detectSource
                 )
-                let restored = TranslationMarkupGuard.restore(result, tokens: tokens)
+                let restored = sanitizeTranslated(TranslationMarkupGuard.restore(result, tokens: tokens))
                 if !isFailedTranslation(restored, original: trimmed) {
-                    progressHandler(.complete)
-                    progress = 1.0
+                    statusDetail = ""
+                    report(.complete, 1.0, progressHandler)
                     return restored
                 }
             } catch {
-                // Simulator, cancelled download, or unsupported pair — use online engines.
+                // Timed out, simulator, language download, or unsupported pair — use online engines.
+                skipOnDevice = true
+                AppleTranslationRuntime.shared.failPending(CancellationError())
+                statusDetail = "Using online translation…"
+                report(.translating, 0.48, progressHandler)
             }
         }
         #endif
@@ -81,9 +88,8 @@ class TranslationService: ObservableObject {
             detectSource: detectSource,
             progressHandler: progressHandler
         )
-        progressHandler(.complete)
-        progress = 1.0
-        return TranslationMarkupGuard.restore(result, tokens: tokens)
+        report(.complete, 1.0, progressHandler)
+        return sanitizeTranslated(TranslationMarkupGuard.restore(result, tokens: tokens))
     }
 
     /// Translates each page on its own so multi-page documents keep one translated page per original page.
@@ -92,9 +98,15 @@ class TranslationService: ObservableObject {
         from sourceLang: Language,
         to targetLang: Language,
         detectSource: Bool = false,
-        progressHandler: @escaping (TranslationStep) -> Void
+        progressHandler: @escaping (TranslationStep, Double) -> Void
     ) async throws -> [String] {
         guard !pages.isEmpty else { return [] }
+        skipOnDevice = pages.count > 1
+        defer {
+            skipOnDevice = false
+            statusDetail = ""
+        }
+
         if pages.count == 1 {
             return [try await translate(
                 text: pages[0],
@@ -105,13 +117,18 @@ class TranslationService: ObservableObject {
             )]
         }
 
-        progressHandler(.translating)
+        report(.translating, 0.40, progressHandler)
         var results: [String] = []
         results.reserveCapacity(pages.count)
         var resolvedSource = sourceLang
         var didDetect = false
+        let total = max(pages.count, 1)
 
         for (index, page) in pages.enumerated() {
+            statusDetail = "Page \(index + 1) of \(total)"
+            let fraction = 0.40 + 0.50 * Double(index) / Double(total)
+            report(.translating, fraction, progressHandler)
+
             let trimmed = page.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.isEmpty {
                 results.append("")
@@ -124,7 +141,7 @@ class TranslationService: ObservableObject {
                 from: resolvedSource,
                 to: targetLang,
                 detectSource: shouldDetect,
-                progressHandler: { _ in }
+                progressHandler: { _, _ in }
             )
             if shouldDetect {
                 if let detected = detectLanguage(in: page) {
@@ -133,11 +150,11 @@ class TranslationService: ObservableObject {
                 didDetect = true
             }
             results.append(translated)
-            progress = Double(index + 1) / Double(pages.count)
-            progressHandler(.translating)
+            report(.translating, 0.40 + 0.50 * Double(index + 1) / Double(total), progressHandler)
         }
 
-        progressHandler(.formatting)
+        statusDetail = ""
+        report(.formatting, 0.90, progressHandler)
         return results
     }
 
@@ -148,7 +165,7 @@ class TranslationService: ObservableObject {
         from sourceLang: Language,
         to targetLang: Language,
         detectSource: Bool,
-        progressHandler: @escaping (TranslationStep) -> Void
+        progressHandler: @escaping (TranslationStep, Double) -> Void
     ) async throws -> String {
         let sourceCode = detectSource ? "auto" : sourceLang.googleCode
         let targetCode = targetLang.googleCode
@@ -156,13 +173,14 @@ class TranslationService: ObservableObject {
         var translatedChunks: [String] = []
 
         for (index, chunk) in chunks.enumerated() {
+            statusDetail = chunks.count > 1 ? "Part \(index + 1) of \(chunks.count)" : ""
             let piece = try await translateChunk(chunk, from: sourceCode, to: targetCode)
             translatedChunks.append(piece)
-            progress = 0.35 + Double(index + 1) / Double(max(chunks.count, 1)) * 0.55
-            progressHandler(.translating)
+            report(.translating, 0.40 + Double(index + 1) / Double(max(chunks.count, 1)) * 0.50, progressHandler)
         }
 
-        progressHandler(.formatting)
+        statusDetail = ""
+        report(.formatting, 0.90, progressHandler)
         let joined = translatedChunks.joined(separator: "\n")
         if isFailedTranslation(joined, original: text) {
             throw TranslationError.unsupportedLanguagePair
@@ -205,12 +223,17 @@ class TranslationService: ObservableObject {
         guard let url = components.url else { throw TranslationError.networkUnavailable }
 
         var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 45
-        request.setValue("application/x-www-form-urlencoded;charset=UTF-8", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 25
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)", forHTTPHeaderField: "User-Agent")
-        let encoded = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
-        request.httpBody = "q=\(encoded)".data(using: .utf8)
+        let encodedQuery = rfc3986Encode(text)
+        if encodedQuery.count < 1800, let getURL = URL(string: url.absoluteString + "&q=\(encodedQuery)") {
+            request.httpMethod = "GET"
+            request.url = getURL
+        } else {
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded;charset=UTF-8", forHTTPHeaderField: "Content-Type")
+            request.httpBody = "q=\(encodedQuery)".data(using: .utf8)
+        }
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
@@ -230,7 +253,7 @@ class TranslationService: ObservableObject {
             guard let row = sentence as? [Any], let translated = row.first as? String else { continue }
             parts.append(translated)
         }
-        let result = decodeEntities(parts.joined())
+        let result = sanitizeTranslated(parts.joined())
         if result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw TranslationError.networkUnavailable
         }
@@ -240,7 +263,7 @@ class TranslationService: ObservableObject {
     // MARK: - Lingva
 
     private func translateWithLingva(_ text: String, from source: String, to target: String) async throws -> String {
-        let pathText = text.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? text
+        let pathText = rfc3986Encode(text)
         let endpoints = [
             "https://lingva.ml/api/v1/\(source)/\(target)/\(pathText)",
             "https://lingva.garudalinux.org/api/v1/\(source)/\(target)/\(pathText)",
@@ -255,7 +278,7 @@ class TranslationService: ObservableObject {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { continue }
                 let decoded = try JSONDecoder().decode(LingvaResponse.self, from: data)
-                let result = decodeEntities(decoded.translation)
+                let result = sanitizeTranslated(decoded.translation)
                 if !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return result
                 }
@@ -274,8 +297,7 @@ class TranslationService: ObservableObject {
         let langpair = "\(source)|\(target)"
 
         for (index, chunk) in chunks.enumerated() {
-            guard let encoded = chunk.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-                  let url = URL(string: "https://api.mymemory.translated.net/get?q=\(encoded)&langpair=\(langpair)") else {
+            guard let url = URL(string: "https://api.mymemory.translated.net/get?q=\(rfc3986Encode(chunk))&langpair=\(rfc3986Encode(langpair))") else {
                 throw TranslationError.networkUnavailable
             }
 
@@ -290,7 +312,7 @@ class TranslationService: ObservableObject {
             if decoded.responseStatus != nil, let status = decoded.responseStatus, status != 200 {
                 throw TranslationError.quotaExceeded
             }
-            let translated = decodeEntities(decoded.responseData.translatedText)
+            let translated = sanitizeTranslated(decoded.responseData.translatedText)
             if isFailedTranslation(translated, original: chunk) {
                 throw TranslationError.quotaExceeded
             }
@@ -305,6 +327,16 @@ class TranslationService: ObservableObject {
     }
 
     // MARK: - Helpers
+
+    private func report(
+        _ step: TranslationStep,
+        _ fraction: Double,
+        _ progressHandler: (TranslationStep, Double) -> Void
+    ) {
+        currentStep = step
+        progress = min(max(fraction, 0), 1)
+        progressHandler(step, progress)
+    }
 
     static func splitIntoChunks(_ text: String, maxSize: Int) -> [String] {
         guard text.count > maxSize else { return [text] }
@@ -375,6 +407,7 @@ class TranslationService: ObservableObject {
     private func isFailedTranslation(_ result: String, original: String) -> Bool {
         let translated = result.trimmingCharacters(in: .whitespacesAndNewlines)
         if translated.isEmpty { return true }
+        if looksPercentEncoded(translated) { return true }
 
         let lowered = translated.lowercased()
         let failureMarkers = [
@@ -406,6 +439,45 @@ class TranslationService: ObservableObject {
             .replacingOccurrences(of: "&gt;", with: ">")
             .replacingOccurrences(of: "&#x27;", with: "'")
             .replacingOccurrences(of: "&nbsp;", with: " ")
+    }
+
+    /// Matches JavaScript encodeURIComponent so spaces/newlines are not left as raw `%20` / `%0A` in the query.
+    private func rfc3986Encode(_ string: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return string.addingPercentEncoding(withAllowedCharacters: allowed) ?? string
+    }
+
+    private func looksPercentEncoded(_ text: String) -> Bool {
+        let pattern = "%(?:20|0A|0D|09|2C|27|22)"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return false }
+        let ns = text as NSString
+        return regex.numberOfMatches(in: text, range: NSRange(location: 0, length: ns.length)) >= 3
+    }
+
+    private func decodeIfPercentEncoded(_ text: String) -> String {
+        looksPercentEncoded(text) ? decodePercentEncoding(text) : text
+    }
+
+    private func decodePercentEncoding(_ text: String) -> String {
+        var current = text
+        for _ in 0..<2 {
+            if let decoded = current.removingPercentEncoding, decoded != current {
+                current = decoded
+            } else {
+                break
+            }
+        }
+        return current
+            .replacingOccurrences(of: "%20", with: " ", options: .caseInsensitive)
+            .replacingOccurrences(of: "%0A", with: "\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "%0D\n", with: "\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "%0D", with: "\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "%09", with: "\t", options: .caseInsensitive)
+    }
+
+    private func sanitizeTranslated(_ text: String) -> String {
+        decodeEntities(decodeIfPercentEncoded(text))
     }
 }
 

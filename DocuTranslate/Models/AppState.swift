@@ -58,18 +58,22 @@ class AppState: ObservableObject {
         images: [UIImage],
         preferExistingImages: Bool = false
     ) async throws {
+        var doc = document
+        let alreadySigned = HistoryStore.shared.documents.first(where: { $0.id == document.id })?.wasSigned == true
+        if alreadySigned { doc.wasSigned = true }
+        let keepExisting = preferExistingImages || doc.wasSigned == true
         let pages = ExportService.shared.imagesForSigning(
-            document,
+            doc,
             existing: images,
-            preferExisting: preferExistingImages
+            preferExisting: keepExisting
         )
         let result = try await ExportService.shared.exportAndSave(
-            document: document,
+            document: doc,
             as: format,
             scannedImages: pages
         )
-        addDocument(document, images: pages, signed: document.wasSigned == true)
-        revealSavedDocument(document, export: result)
+        addDocument(doc, images: pages, signed: keepExisting)
+        revealSavedDocument(doc, export: result)
     }
 
     func images(for document: TranslatedDocument) -> [UIImage] {
