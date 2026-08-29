@@ -1,0 +1,31 @@
+{
+  "identifier" : "A7C3E19B2F4D4A8E9C1B6D2E",
+  "nonRenewingSubscriptions" : [],
+
+  "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "B8D4F20C3A5E4B9F0D2C7E3F",
+      "localizations" : [
+        {
+          "description" : "Remove the Scanned by DocuTranslate footer from one converted, signed, or scanned document.",
+          "displayName" : "Remove Document Tag",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.docutranslate.ios.remove_branding",
+      "referenceName" : "Remove Document Tag",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_applicationInternalID" : "C9E5A31D4B6F5C0A1E3D8F4A",
+    "_developerTeamID" : "BY97QGCX78"
+  },
+  "subscriptionGroups" : [],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}
