@@ -330,15 +330,15 @@ struct ScanTranslateView: View {
                         TranslatedDocumentPreview(
                             document: result,
                             scannedImages: vm.session.pages.map(\.displayImage),
-                            onExport: {
-                                AppAnalytics.tap("scan_translate_export")
-                                tvm.showExportSheet = true
-                            },
                             onSignStamp: {
                                 AppAnalytics.tap("scan_translate_sign")
                                 showSignStampEditor = true
                             }
                         )
+                        ExportFormatRow(isEnabled: !isExporting) { format in
+                            AppAnalytics.tap("scan_translate_export_format", ["format": format.rawValue])
+                            Task { await exportTranslated(result, format: format) }
+                        }
                     } else if extracting || tvm.isTranslating {
                         translatingPlaceholder
                     }
@@ -393,17 +393,14 @@ struct ScanTranslateView: View {
             .overlay {
                 if tvm.isTranslating {
                     TranslationProgressView(vm: tvm)
+                } else if isExporting {
+                    ExportingOverlay()
                 }
             }
             .alert("Error", isPresented: $tvm.showError) {
                 Button("OK", role: .cancel, action: AppAnalytics.action("scan_translate_error_ok") {})
             } message: {
                 Text(tvm.errorMessage)
-            }
-            .sheet(isPresented: $tvm.showExportSheet) {
-                if let d = tvm.translatedDocument {
-                    ExportView(document: d, images: vm.session.pages.map(\.displayImage))
-                }
             }
             .alert("Sign & Stamp", isPresented: $showSignStampPrompt) {
                 Button("Sign / Stamp", action: AppAnalytics.action("scan_translate_prompt_sign") { showSignStampEditor = true })
@@ -439,6 +436,23 @@ struct ScanTranslateView: View {
             }
             .background(AppleTranslationHook())
         }
+    }
+
+    private func exportTranslated(_ document: TranslatedDocument, format: ExportFormat) async {
+        isExporting = true
+        do {
+            try await appState.exportAndReveal(
+                document,
+                format: format,
+                images: vm.session.pages.map(\.displayImage),
+                preferExistingImages: true
+            )
+            dismiss()
+        } catch {
+            tvm.errorMessage = error.localizedDescription
+            tvm.showError = true
+        }
+        isExporting = false
     }
 
     private var translatingPlaceholder: some View {
@@ -496,6 +510,8 @@ struct DocumentPickerView: UIViewControllerRepresentable {
          UTType(filenameExtension: "txt")  ?? .data,
          UTType(filenameExtension: "rtf")  ?? .data,
          UTType(filenameExtension: "md")   ?? .data,
+         UTType(filenameExtension: "svg")  ?? .data,
+         UTType(filenameExtension: "xml")  ?? .data,
         ]
     }
 

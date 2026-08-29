@@ -3,7 +3,6 @@ import SwiftUI
 struct TranslatedDocumentPreview: View {
     let document: TranslatedDocument
     var scannedImages: [UIImage] = []
-    var onExport: (() -> Void)?
     var onSignStamp: (() -> Void)?
 
     @State private var selectedTab: PreviewTab = .translated
@@ -19,30 +18,15 @@ struct TranslatedDocumentPreview: View {
             languageRoute
             tabPicker
             documentPage
-            if onExport != nil || onSignStamp != nil {
-                VStack(spacing: 10) {
-                    if let onSignStamp {
-                        Button(action: onSignStamp) {
-                            Label("Sign / Stamp", systemImage: "signature")
-                                .font(.headline)
-                                .foregroundColor(.blue)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color.blue.opacity(0.12))
-                                .cornerRadius(14)
-                        }
-                    }
-                    if let onExport {
-                        Button(action: onExport) {
-                            Label("Export Document", systemImage: "square.and.arrow.up")
-                                .font(.headline)
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 14)
-                                .background(Color.blue)
-                                .cornerRadius(14)
-                        }
-                    }
+            if let onSignStamp {
+                Button(action: onSignStamp) {
+                    Label("Sign / Stamp", systemImage: "signature")
+                        .font(.headline)
+                        .foregroundColor(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.blue.opacity(0.12))
+                        .cornerRadius(14)
                 }
             }
         }

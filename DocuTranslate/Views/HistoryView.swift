@@ -70,10 +70,31 @@ struct HistoryView: View {
                     images: appState.images(for: doc)
                 )
             }
-            .sheet(item: $exportingDocument) { doc in
+            .sheet(item: $exportingDocument, onDismiss: { consumePendingPreview() }) { doc in
                 ExportView(document: doc, images: appState.images(for: doc))
             }
+            .onAppear { consumePendingPreview() }
+            .onChange(of: appState.documentToPreview?.id) { _, _ in
+                consumePendingPreview()
+            }
+            .onChange(of: appState.currentTab) { _, tab in
+                if tab == .history { consumePendingPreview() }
+            }
+            .overlay {
+                if let saved = appState.lastSavedExport, viewingDocument == nil {
+                    SavedExportAlert(result: saved) {
+                        AppAnalytics.tap("export_success_ok")
+                        appState.lastSavedExport = nil
+                    }
+                }
+            }
         }
+    }
+
+    private func consumePendingPreview() {
+        guard let doc = appState.documentToPreview else { return }
+        viewingDocument = doc
+        appState.documentToPreview = nil
     }
 
     private var emptyState: some View {
@@ -347,7 +368,10 @@ struct HistoryDocumentViewer: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done", action: AppAnalytics.action("history_viewer_done") { dismiss() })
+                    Button("Done", action: AppAnalytics.action("history_viewer_done") {
+                        appState.lastSavedExport = nil
+                        dismiss()
+                    })
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 12) {
@@ -370,6 +394,14 @@ struct HistoryDocumentViewer: View {
             }
             .sheet(isPresented: $showExport) {
                 ExportView(document: liveDocument, images: images)
+            }
+            .overlay {
+                if let saved = appState.lastSavedExport {
+                    SavedExportAlert(result: saved) {
+                        AppAnalytics.tap("export_success_ok")
+                        appState.lastSavedExport = nil
+                    }
+                }
             }
         }
     }

@@ -20,6 +20,11 @@ class DocumentProcessor {
             return (result.text, result.pages, .pdf)
         case "docx", "doc":
             return (try await extractFromOfficeXML(url: url), 1, .word)
+        case "svg", "xml", "html", "htm":
+            let text = (try? String(contentsOf: url, encoding: .utf8))
+                    ?? (try? String(contentsOf: url, encoding: .isoLatin1))
+                    ?? ""
+            return (text, 1, .text)
         case "txt", "md", "rtf":
             let text = (try? String(contentsOf: url, encoding: .utf8))
                     ?? (try? String(contentsOf: url, encoding: .isoLatin1))

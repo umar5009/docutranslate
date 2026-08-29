@@ -46,8 +46,10 @@ class AppState: ObservableObject {
 
     func revealSavedDocument(_ document: TranslatedDocument, export: ExportService.SavedExport) {
         lastSavedExport = export
-        documentToPreview = document
         currentTab = .history
+        DispatchQueue.main.async {
+            self.documentToPreview = document
+        }
     }
 
     func exportAndReveal(

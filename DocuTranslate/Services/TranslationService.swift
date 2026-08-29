@@ -62,10 +62,11 @@ class TranslationService: ObservableObject {
                     to: targetLang,
                     detectSource: detectSource
                 )
-                if !isFailedTranslation(result, original: human) {
+                let restored = TranslationMarkupGuard.restore(result, tokens: tokens)
+                if !isFailedTranslation(restored, original: trimmed) {
                     progressHandler(.complete)
                     progress = 1.0
-                    return TranslationMarkupGuard.restore(result, tokens: tokens)
+                    return restored
                 }
             } catch {
                 // Simulator, cancelled download, or unsupported pair — use online engines.

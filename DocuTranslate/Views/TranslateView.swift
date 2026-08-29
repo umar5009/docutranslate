@@ -6,6 +6,7 @@ struct TranslateView: View {
     @StateObject private var vm = TranslateViewModel()
     @State private var showSignStampPrompt = false
     @State private var showSignStampEditor = false
+    @State private var isExporting = false
 
     var body: some View {
         NavigationView {
@@ -33,11 +34,6 @@ struct TranslateView: View {
             .navigationBarTitleDisplayMode(.large)
             .sheet(isPresented: $vm.showFilePicker) {
                 DocumentPickerView(vm: vm)
-            }
-            .sheet(isPresented: $vm.showExportSheet) {
-                if let doc = vm.translatedDocument {
-                    ExportView(document: doc, images: vm.exportImages)
-                }
             }
             .alert("Sign & Stamp", isPresented: $showSignStampPrompt) {
                 Button("Sign / Stamp", action: AppAnalytics.action("translate_prompt_sign") { showSignStampEditor = true })
@@ -75,6 +71,8 @@ struct TranslateView: View {
             .overlay {
                 if vm.isTranslating {
                     TranslationProgressView(vm: vm)
+                } else if isExporting {
+                    ExportingOverlay()
                 }
             }
             .alert("Error", isPresented: $vm.showError) {
@@ -297,21 +295,27 @@ struct TranslateView: View {
         VStack(spacing: 12) {
             TranslatedDocumentPreview(
                 document: result,
-                onExport: {
-                    AppAnalytics.tap("translate_export")
-                    vm.showExportSheet = true
-                },
                 onSignStamp: {
                     AppAnalytics.tap("translate_sign_stamp")
                     showSignStampEditor = true
                 }
             )
-            ExportFormatRow { format in
+            ExportFormatRow(isEnabled: !isExporting) { format in
                 AppAnalytics.tap("translate_export_format", ["format": format.rawValue])
-                vm.selectedExportFormat = format
-                vm.showExportSheet = true
+                Task { await exportTranslated(result, format: format) }
             }
         }
+    }
+
+    private func exportTranslated(_ document: TranslatedDocument, format: ExportFormat) async {
+        isExporting = true
+        do {
+            try await appState.exportAndReveal(document, format: format, images: vm.exportImages)
+        } catch {
+            vm.errorMessage = error.localizedDescription
+            vm.showError = true
+        }
+        isExporting = false
     }
 }
 
@@ -358,6 +362,7 @@ struct LanguagePickerButton: View {
 // MARK: - Export Format Row
 
 struct ExportFormatRow: View {
+    var isEnabled: Bool = true
     let onSelect: (ExportFormat) -> Void
 
     var body: some View {
@@ -391,6 +396,7 @@ struct ExportFormatRow: View {
                         .cornerRadius(10)
                     }
                     .buttonStyle(.plain)
+                    .disabled(!isEnabled)
                 }
             }
         }

@@ -22,10 +22,8 @@ class TranslateViewModel: ObservableObject {
     @Published var showFilePicker = false
     @Published var showSourcePicker = false
     @Published var showTargetPicker = false
-    @Published var showExportSheet = false
     @Published var showError = false
     @Published var errorMessage = ""
-    @Published var selectedExportFormat: ExportFormat?
     @Published var exportImages: [UIImage] = []
 
     private let svc = TranslationService.shared
