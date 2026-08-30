@@ -303,25 +303,19 @@ struct TranslateView: View {
                     showSignStampEditor = true
                 }
             )
-            ExportFormatRow(isEnabled: !isExporting) { format in
-                AppAnalytics.tap("translate_export_format", ["format": format.rawValue])
-                Task { await exportTranslated(result, format: format) }
+            ExportFormatRow(isEnabled: !isExporting) {
+                AppAnalytics.tap("translate_save_history")
+                Task { await exportTranslated(result) }
             }
         }
     }
 
-    private func exportTranslated(_ document: TranslatedDocument, format: ExportFormat) async {
+    private func exportTranslated(_ document: TranslatedDocument) async {
         isExporting = true
-        do {
-            try await appState.exportAndReveal(
-                vm.translatedDocument ?? document,
-                format: format,
-                images: vm.exportImages
-            )
-        } catch {
-            vm.errorMessage = error.localizedDescription
-            vm.showError = true
-        }
+        await appState.exportAndReveal(
+            vm.translatedDocument ?? document,
+            images: vm.exportImages
+        )
         isExporting = false
     }
 }
@@ -370,42 +364,25 @@ struct LanguagePickerButton: View {
 
 struct ExportFormatRow: View {
     var isEnabled: Bool = true
-    let onSelect: (ExportFormat) -> Void
+    let onSave: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Export As")
-                .font(.caption.weight(.semibold))
-                .foregroundColor(.secondary)
-
-            LazyVGrid(columns: [
-                GridItem(.flexible()),
-                GridItem(.flexible()),
-                GridItem(.flexible()),
-            ], spacing: 8) {
-                ForEach(ExportFormat.allCases) { format in
-                    Button {
-                        onSelect(format)
-                    } label: {
-                        VStack(spacing: 5) {
-                            Image(systemName: format.icon)
-                                .font(.system(size: 18))
-                                .foregroundColor(.blue)
-                            Text(format.rawValue)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Color(.systemGray6))
-                        .cornerRadius(10)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!isEnabled)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: onSave) {
+                Label("Save to History", systemImage: "clock.arrow.circlepath")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 14)
+                    .background(isEnabled ? Color.blue : Color.blue.opacity(0.4))
+                    .cornerRadius(14)
             }
+            .buttonStyle(.plain)
+            .disabled(!isEnabled)
+
+            Text("Opens in History. Use Share to send a PDF or save a copy to Files.")
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
 }

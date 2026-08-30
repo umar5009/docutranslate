@@ -64,8 +64,8 @@ struct ConvertView: View {
             }
             .alert("Sign & Stamp?", isPresented: $showSignStampPrompt) {
                 Button("Sign / Stamp", action: AppAnalytics.action("convert_prompt_sign") { showSignStampEditor = true })
-                Button("Save as \(vm.outputFormat.rawValue)", action: AppAnalytics.action("convert_prompt_download") {
-                    Task { await exportConverted(format: vm.outputFormat) }
+                Button("Save", action: AppAnalytics.action("convert_prompt_save") {
+                    Task { await exportConverted() }
                 })
                 Button("Cancel", role: .cancel, action: AppAnalytics.action("convert_prompt_cancel") {})
             } message: {
@@ -277,9 +277,9 @@ struct ConvertView: View {
                     .cornerRadius(14)
             }
 
-            ExportFormatRow(isEnabled: !isExporting) { format in
-                AppAnalytics.tap("convert_export_format", ["format": format.rawValue])
-                Task { await exportConverted(format: format) }
+            ExportFormatRow(isEnabled: !isExporting) {
+                AppAnalytics.tap("convert_save_history")
+                Task { await exportConverted() }
             }
         }
         .padding()
@@ -288,20 +288,14 @@ struct ConvertView: View {
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
     }
 
-    private func exportConverted(format: ExportFormat) async {
+    private func exportConverted() async {
         guard let doc = vm.processedDocument else { return }
         isExporting = true
-        do {
-            try await appState.exportAndReveal(
-                doc,
-                format: format,
-                images: vm.pages,
-                preferExistingImages: true
-            )
-        } catch {
-            vm.errorMessage = error.localizedDescription
-            vm.showError = true
-        }
+        await appState.exportAndReveal(
+            doc,
+            images: vm.pages,
+            preferExistingImages: true
+        )
         isExporting = false
     }
 

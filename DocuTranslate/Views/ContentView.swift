@@ -43,6 +43,15 @@ struct ContentView: View {
                 .tag(AppState.Tab.settings)
         }
         .accentColor(.blue)
+        .sheet(item: Binding(
+            get: { appState.documentToPreview },
+            set: { appState.documentToPreview = $0 }
+        )) { doc in
+            HistoryDocumentViewer(
+                document: doc,
+                images: appState.images(for: doc)
+            )
+        }
         .onAppear {
             let appearance = UITabBarAppearance()
             appearance.configureWithDefaultBackground()

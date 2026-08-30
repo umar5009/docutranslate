@@ -13,10 +13,7 @@ class ScanViewModel: ObservableObject {
     @Published var showCropEditor = false
     @Published var showTranslateSheet = false
     @Published var showSignStampEditor = false
-    @Published var showExportOptions = false
     @Published var showActionSheet = false
-    @Published var showExportError = false
-    @Published var exportErrorMessage = ""
 
     @Published var editingPageIndex: Int?
     @Published var photoPickerItems: [PhotosPickerItem] = []
@@ -166,8 +163,9 @@ class ScanViewModel: ObservableObject {
 
     // MARK: - Export
 
-    func export(as format: ExportFormat) async -> (TranslatedDocument, ExportService.SavedExport)? {
+    func exportToHistory() async -> TranslatedDocument? {
         let images = session.pages.map(\.displayImage)
+        guard !images.isEmpty else { return nil }
         let doc = TranslatedDocument(
             id: session.id,
             fileName: "Scanned_Document",
@@ -178,20 +176,9 @@ class ScanViewModel: ObservableObject {
             originalText: "",
             pageCount: session.pages.count
         )
-        do {
-            let result = try await ExportService.shared.exportAndSave(
-                document: doc,
-                as: format,
-                scannedImages: images
-            )
-            HistoryStore.shared.add(doc, images: images, signed: false)
-            ReviewPromptService.shared.considerPrompt(after: "scan_export")
-            return (doc, result)
-        } catch {
-            exportErrorMessage = error.localizedDescription
-            showExportError = true
-            return nil
-        }
+        HistoryStore.shared.add(doc, images: images, signed: false)
+        ReviewPromptService.shared.considerPrompt(after: "scan_export")
+        return doc
     }
 
     func persistToHistory(signed: Bool, images: [UIImage]? = nil) {

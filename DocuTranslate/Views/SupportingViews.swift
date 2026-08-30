@@ -64,18 +64,14 @@ struct TranslationProgressView: View {
 struct ExportView: View {
     let document: TranslatedDocument
     var images: [UIImage] = []
-    var initialFormat: ExportFormat = .pdf
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var liveDocument: TranslatedDocument
     @State private var isExporting = false
-    @State private var exportError: String?
-    @State private var selectedFormat: ExportFormat = .pdf
 
-    init(document: TranslatedDocument, images: [UIImage] = [], initialFormat: ExportFormat = .pdf) {
+    init(document: TranslatedDocument, images: [UIImage] = [], initialFormat _: ExportFormat = .pdf) {
         self.document = document
         self.images = images
-        self.initialFormat = initialFormat
         _liveDocument = State(initialValue: document)
     }
 
@@ -88,23 +84,16 @@ struct ExportView: View {
                 }
                 .padding(.horizontal)
                 saveLocationHint
-                formatGrid
                 Spacer()
                 exportButton
             }
-            .navigationTitle("Export Document")
+            .navigationTitle("Save Document")
             .navigationBarTitleDisplayMode(.inline)
-            .onAppear { selectedFormat = initialFormat }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel", action: AppAnalytics.action("export_cancel") { dismiss() })
                 }
             }
-            .alert("Export Failed", isPresented: .init(
-                get: { exportError != nil },
-                set: { if !$0 { exportError = nil } }
-            )) { Button("OK", role: .cancel, action: AppAnalytics.action("export_error_ok") {}) }
-            message: { Text(exportError ?? "") }
             .overlay {
                 if isExporting {
                     ExportingOverlay()
@@ -114,14 +103,10 @@ struct ExportView: View {
     }
 
     private var saveLocationHint: some View {
-        HStack(spacing: 10) {
-            Image(systemName: selectedFormat.isImage ? "photo.on.rectangle.angled" : "folder.fill")
-                .foregroundColor(selectedFormat.isImage ? .pink : .blue)
-            Text(selectedFormat.isImage
-                 ? (images.count > 1
-                    ? "Each of the \(images.count) pages saves as a separate image in Photos → Recents"
-                    : "Images save to the Photos app → Recents")
-                 : "Documents save to Files → On My iPhone → DocuTranslate → Exports")
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundColor(.blue)
+            Text("Saved documents appear in History. Use Share from History to send a PDF or save a copy to Files.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -157,34 +142,16 @@ struct ExportView: View {
         .padding(.horizontal)
     }
 
-    private var formatGrid: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Choose Format").font(.headline).padding(.horizontal)
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(ExportFormat.allCases) { fmt in
-                    ExportFormatCard(format: fmt, isSelected: selectedFormat == fmt) {
-                        AppAnalytics.tap("export_format", ["format": fmt.rawValue])
-                        selectedFormat = fmt
-                    }
-                }
-            }
-            .padding(.horizontal)
-        }
-    }
-
     private var exportButton: some View {
         Button {
-            AppAnalytics.tap("export_save", ["format": selectedFormat.rawValue])
+            AppAnalytics.tap("export_save_history")
             Task { await doExport() }
         } label: {
             Group {
                 if isExporting {
                     ProgressView().tint(.white)
                 } else {
-                    Label(
-                        selectedFormat.isImage ? "Save to Photos" : "Save to Files",
-                        systemImage: selectedFormat.isImage ? "photo.badge.arrow.down" : "folder.badge.plus"
-                    )
+                    Label("Save to History", systemImage: "clock.arrow.circlepath")
                     .font(.headline)
                 }
             }
@@ -200,20 +167,13 @@ struct ExportView: View {
 
     private func doExport() async {
         isExporting = true
-        do {
-            let result = try await ExportService.shared.exportAndSave(
-                document: liveDocument,
-                as: selectedFormat,
-                scannedImages: images.isEmpty ? nil : images
-            )
-            appState.addDocument(liveDocument, images: images, signed: liveDocument.wasSigned == true)
-            isExporting = false
-            dismiss()
-            appState.revealSavedDocument(liveDocument, export: result)
-        } catch {
-            exportError = error.localizedDescription
-            isExporting = false
-        }
+        await appState.exportAndReveal(
+            liveDocument,
+            images: images,
+            preferExistingImages: liveDocument.wasSigned == true
+        )
+        isExporting = false
+        dismiss()
     }
 }
 
@@ -306,13 +266,27 @@ struct SavedExportAlert: View {
     }
 }
 
+struct ActivityShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        controller.popoverPresentationController?.sourceRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 struct ExportingOverlay: View {
+    var message: String = "Saving…"
+
     var body: some View {
         ZStack {
             Color.black.opacity(0.45).ignoresSafeArea()
             VStack(spacing: 16) {
                 ProgressView().tint(.white).scaleEffect(1.2)
-                Text("Saving…")
+                Text(message)
                     .font(.headline)
                     .foregroundColor(.white)
             }
@@ -352,9 +326,9 @@ struct ScanTranslateView: View {
                                 showSignStampEditor = true
                             }
                         )
-                        ExportFormatRow(isEnabled: !isExporting) { format in
-                            AppAnalytics.tap("scan_translate_export_format", ["format": format.rawValue])
-                            Task { await exportTranslated(result, format: format) }
+                        ExportFormatRow(isEnabled: !isExporting) {
+                            AppAnalytics.tap("scan_translate_save_history")
+                            Task { await exportTranslated(result) }
                         }
                     } else if extracting || tvm.isTranslating {
                         translatingPlaceholder
@@ -460,20 +434,14 @@ struct ScanTranslateView: View {
         }
     }
 
-    private func exportTranslated(_ document: TranslatedDocument, format: ExportFormat) async {
+    private func exportTranslated(_ document: TranslatedDocument) async {
         isExporting = true
-        do {
-            try await appState.exportAndReveal(
-                tvm.translatedDocument ?? document,
-                format: format,
-                images: vm.session.pages.map(\.displayImage)
-            )
-            dismiss()
-        } catch {
-            tvm.errorMessage = error.localizedDescription
-            tvm.showError = true
-        }
+        await appState.exportAndReveal(
+            tvm.translatedDocument ?? document,
+            images: vm.session.pages.map(\.displayImage)
+        )
         isExporting = false
+        dismiss()
     }
 
     private var translatingPlaceholder: some View {

@@ -5,7 +5,10 @@ struct HistoryView: View {
     @State private var searchText = ""
     @State private var selectedFilter: HistoryFilter = .all
     @State private var viewingDocument: TranslatedDocument?
-    @State private var exportingDocument: TranslatedDocument?
+    @State private var shareItems: [Any] = []
+    @State private var showShareSheet = false
+    @State private var isPreparingShare = false
+    @State private var shareError: String?
 
     enum HistoryFilter: String, CaseIterable {
         case all = "All"
@@ -70,44 +73,38 @@ struct HistoryView: View {
                     images: appState.images(for: doc)
                 )
             }
-            .sheet(item: $exportingDocument, onDismiss: { consumePendingPreview() }) { doc in
-                ExportView(document: doc, images: appState.images(for: doc))
+            .sheet(isPresented: $showShareSheet) {
+                ActivityShareSheet(items: shareItems)
             }
-            .onAppear { consumePendingPreview() }
-            .onChange(of: appState.documentToPreview?.id) { _, _ in
-                consumePendingPreview()
-            }
-            .onChange(of: appState.currentTab) { _, tab in
-                if tab == .history { consumePendingPreview() }
-            }
-            .onChange(of: appState.lastSavedExport?.fileName) { _, _ in
-                consumePendingPreview()
-            }
-            .fullScreenCover(isPresented: Binding(
-                get: { appState.lastSavedExport != nil && viewingDocument == nil },
-                set: { if !$0 { dismissSavedExport() } }
-            )) {
-                if let saved = appState.lastSavedExport {
-                    SavedExportAlert(result: saved) {
-                        AppAnalytics.tap("export_success_ok")
-                        dismissSavedExport()
-                    }
-                    .presentationBackground(.clear)
+            .overlay {
+                if isPreparingShare {
+                    ExportingOverlay(message: "Preparing…")
                 }
+            }
+            .alert("Couldn’t Share", isPresented: .init(
+                get: { shareError != nil },
+                set: { if !$0 { shareError = nil } }
+            )) {
+                Button("OK", role: .cancel) { shareError = nil }
+            } message: {
+                Text(shareError ?? "")
             }
         }
     }
 
-    private func dismissSavedExport() {
-        appState.lastSavedExport = nil
-        consumePendingPreview()
-    }
-
-    private func consumePendingPreview() {
-        guard appState.lastSavedExport == nil else { return }
-        guard let doc = appState.documentToPreview else { return }
-        viewingDocument = doc
-        appState.documentToPreview = nil
+    private func shareDocument(_ document: TranslatedDocument) async {
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+        do {
+            let url = try await ExportService.shared.makeShareFile(
+                document: document,
+                images: appState.images(for: document)
+            )
+            shareItems = [url]
+            showShareSheet = true
+        } catch {
+            shareError = error.localizedDescription
+        }
     }
 
     private var emptyState: some View {
@@ -165,9 +162,9 @@ struct HistoryView: View {
                                         AppAnalytics.tap("history_open", ["file": doc.fileName])
                                         viewingDocument = doc
                                     },
-                                    onExport: {
-                                        AppAnalytics.tap("history_export", ["file": doc.fileName])
-                                        exportingDocument = doc
+                                    onShare: {
+                                        AppAnalytics.tap("history_share", ["file": doc.fileName])
+                                        Task { await shareDocument(doc) }
                                     }
                                 )
                                 .listRowSeparator(.hidden)
@@ -244,7 +241,7 @@ struct HistoryDayGroup: Identifiable {
 struct HistoryRow: View {
     let document: TranslatedDocument
     let onView: () -> Void
-    let onExport: () -> Void
+    let onShare: () -> Void
 
     var body: some View {
         Button(action: onView) {
@@ -305,7 +302,7 @@ struct HistoryRow: View {
                         .foregroundColor(.secondary)
                 }
 
-                Button(action: onExport) {
+                Button(action: onShare) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.system(size: 16))
                         .foregroundColor(.blue)
@@ -337,7 +334,10 @@ struct HistoryDocumentViewer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var liveDocument: TranslatedDocument
     @State private var pageIndex = 0
-    @State private var showExport = false
+    @State private var showShareSheet = false
+    @State private var shareItems: [Any] = []
+    @State private var isPreparingShare = false
+    @State private var shareError: String?
     @State private var showText = false
 
     init(document: TranslatedDocument, images: [UIImage]) {
@@ -376,14 +376,13 @@ struct HistoryDocumentViewer: View {
                     pagePreview
                 }
             }
-            .allowsHitTesting(appState.lastSavedExport == nil)
             .background(Color(.systemGroupedBackground))
             .navigationTitle(document.fileName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done", action: AppAnalytics.action("history_viewer_done") {
-                        appState.lastSavedExport = nil
+                        appState.documentToPreview = nil
                         dismiss()
                     })
                 }
@@ -398,25 +397,46 @@ struct HistoryDocumentViewer: View {
                             }
                         }
                         Button {
-                            AppAnalytics.tap("history_viewer_export")
-                            showExport = true
+                            AppAnalytics.tap("history_viewer_share")
+                            Task { await shareCurrentDocument() }
                         } label: {
                             Image(systemName: "square.and.arrow.up")
                         }
+                        .disabled(isPreparingShare)
                     }
                 }
             }
-            .sheet(isPresented: $showExport) {
-                ExportView(document: liveDocument, images: images)
+            .sheet(isPresented: $showShareSheet) {
+                ActivityShareSheet(items: shareItems)
             }
-        }
-        .overlay {
-            if let saved = appState.lastSavedExport {
-                SavedExportAlert(result: saved) {
-                    AppAnalytics.tap("export_success_ok")
-                    appState.lastSavedExport = nil
+            .overlay {
+                if isPreparingShare {
+                    ExportingOverlay(message: "Preparing…")
                 }
             }
+            .alert("Couldn’t Share", isPresented: .init(
+                get: { shareError != nil },
+                set: { if !$0 { shareError = nil } }
+            )) {
+                Button("OK", role: .cancel) { shareError = nil }
+            } message: {
+                Text(shareError ?? "")
+            }
+        }
+    }
+
+    private func shareCurrentDocument() async {
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+        do {
+            let url = try await ExportService.shared.makeShareFile(
+                document: liveDocument,
+                images: images
+            )
+            shareItems = [url]
+            showShareSheet = true
+        } catch {
+            shareError = error.localizedDescription
         }
     }
 

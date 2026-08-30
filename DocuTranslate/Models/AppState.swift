@@ -6,7 +6,6 @@ class AppState: ObservableObject {
     @Published var recentDocuments: [TranslatedDocument] = []
     @Published var showOnboarding: Bool = false
     @Published var documentToPreview: TranslatedDocument?
-    @Published var lastSavedExport: ExportService.SavedExport?
 
     private var historyCancellable: AnyCancellable?
 
@@ -44,20 +43,22 @@ class AppState: ObservableObject {
         HistoryStore.shared.add(doc, images: images, signed: signed)
     }
 
-    func revealSavedDocument(_ document: TranslatedDocument, export: ExportService.SavedExport) {
-        lastSavedExport = export
+    func revealSavedDocument(_ document: TranslatedDocument) {
         currentTab = .history
-        // Keep the document queued until the user taps OK so the success alert
-        // is not covered by the preview sheet (which was swallowing the OK tap).
-        documentToPreview = document
+        // Wait for the History tab (and any export sheet) to settle so the preview
+        // can present on top of the tab bar instead of being swallowed.
+        Task { @MainActor in
+            documentToPreview = nil
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            documentToPreview = document
+        }
     }
 
     func exportAndReveal(
         _ document: TranslatedDocument,
-        format: ExportFormat,
         images: [UIImage],
         preferExistingImages: Bool = false
-    ) async throws {
+    ) async {
         var doc = document
         let alreadySigned = HistoryStore.shared.documents.first(where: { $0.id == document.id })?.wasSigned == true
         if alreadySigned { doc.wasSigned = true }
@@ -67,13 +68,8 @@ class AppState: ObservableObject {
             existing: images,
             preferExisting: keepExisting
         )
-        let result = try await ExportService.shared.exportAndSave(
-            document: doc,
-            as: format,
-            scannedImages: pages
-        )
         addDocument(doc, images: pages, signed: keepExisting)
-        revealSavedDocument(doc, export: result)
+        revealSavedDocument(doc)
     }
 
     func images(for document: TranslatedDocument) -> [UIImage] {

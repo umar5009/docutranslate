@@ -74,6 +74,20 @@ class ExportService {
         return rendered
     }
 
+    /// Writes a PDF (with stamps/signatures when present) for the iOS share sheet.
+    func makeShareFile(document: TranslatedDocument, images: [UIImage]) async throws -> URL {
+        var pages = images
+        if pages.isEmpty {
+            pages = imagesForSigning(document, existing: [], preferExisting: document.wasSigned == true)
+        }
+        pages = DocumentBranding.apply(pages, to: document)
+        return try await export(
+            document: document,
+            as: .pdf,
+            scannedImages: pages.isEmpty ? nil : pages
+        )
+    }
+
     // MARK: - Save Destinations
 
     private func saveDocumentExport(from tempURL: URL, format: ExportFormat) throws -> SavedExport {
