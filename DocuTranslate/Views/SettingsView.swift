@@ -232,7 +232,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Link(destination: URL(string: "https://github.com/umar5009/docutranslate-privacy-support-page/blob/main/PRIVACY.md")!) {
+                    Link(destination: LegalURLs.privacy) {
                         SettingsRow(icon: "hand.raised.fill", iconColor: .gray, title: "Privacy Policy", value: "")
                     }
                     .simultaneousGesture(TapGesture().onEnded {
