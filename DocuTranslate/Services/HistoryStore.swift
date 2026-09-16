@@ -48,10 +48,16 @@ final class HistoryStore: ObservableObject {
             stored.fileName = existingName
         }
         if !images.isEmpty {
-            if let old = existing { deletePageFiles(for: old) }
-            stored.pageImageFileNames = persist(images, for: document.id)
-            stored.thumbnailData = thumbnailData(from: images[0])
-            stored.pageCount = max(stored.pageCount, images.count)
+            let wouldWipeSignedPages = existing?.wasSigned == true && !signed && document.wasSigned != true
+            if wouldWipeSignedPages {
+                stored.pageImageFileNames = existing?.pageImageFileNames
+                stored.thumbnailData = stored.thumbnailData ?? existing?.thumbnailData
+            } else {
+                if let old = existing { deletePageFiles(for: old) }
+                stored.pageImageFileNames = persist(images, for: document.id)
+                stored.thumbnailData = thumbnailData(from: images[0])
+                stored.pageCount = max(stored.pageCount, images.count)
+            }
         } else if let existing {
             stored.pageImageFileNames = existing.pageImageFileNames
             stored.thumbnailData = stored.thumbnailData ?? existing.thumbnailData

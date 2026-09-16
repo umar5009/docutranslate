@@ -62,13 +62,30 @@ class ExportService {
     }
 
     func imagesForSigning(_ document: TranslatedDocument, existing: [UIImage], preferExisting: Bool = false) -> [UIImage] {
-        if preferExisting, !existing.isEmpty { return existing }
+        // Signed/stamped pages are the source of truth. Never replace them with a fresh text render.
+        if !existing.isEmpty, preferExisting || document.wasSigned == true {
+            return existing
+        }
         let rendered = renderTextPages(document)
         if !document.translatedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !rendered.isEmpty {
             return rendered
         }
         if !existing.isEmpty { return existing }
         return rendered
+    }
+
+    /// Writes a PDF (with stamps/signatures when present) for the iOS share sheet.
+    func makeShareFile(document: TranslatedDocument, images: [UIImage]) async throws -> URL {
+        var pages = images
+        if pages.isEmpty {
+            pages = imagesForSigning(document, existing: [], preferExisting: document.wasSigned == true)
+        }
+        pages = DocumentBranding.apply(pages, to: document)
+        return try await export(
+            document: document,
+            as: .pdf,
+            scannedImages: pages.isEmpty ? nil : pages
+        )
     }
 
     // MARK: - Save Destinations
@@ -202,7 +219,11 @@ class ExportService {
             ctx.beginPage()
             let style = NSMutableParagraphStyle(); style.lineSpacing = 4
             let bodyAttr: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 11), .foregroundColor: UIColor.black, .paragraphStyle: style]
-            doc.translatedText.draw(in: CGRect(x: 40, y: 40, width: pageRect.width - 80, height: pageRect.height - 80), withAttributes: bodyAttr)
+            let pages = doc.translatedPageTexts
+            for (index, body) in pages.enumerated() {
+                if index > 0 { ctx.beginPage() }
+                body.draw(in: CGRect(x: 40, y: 40, width: pageRect.width - 80, height: pageRect.height - 80), withAttributes: bodyAttr)
+            }
         }
         try data.write(to: url)
         return url
@@ -212,7 +233,7 @@ class ExportService {
 
     private func makeDOCX(doc: TranslatedDocument, name: String) async throws -> URL {
         let url = tmp(name, "docx")
-        let esc = doc.translatedText
+        let esc = DocumentPageBreak.displayText(doc.translatedText)
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
             .replacingOccurrences(of: ">", with: "&gt;")
@@ -261,7 +282,7 @@ class ExportService {
 
     private func makeTXT(doc: TranslatedDocument, name: String) async throws -> URL {
         let url = tmp(name, "txt")
-        var content = doc.translatedText
+        var content = DocumentPageBreak.displayText(doc.translatedText)
         if let footer = DocumentBranding.textFooter(for: doc) {
             content += "\n\(footer)"
         }
@@ -273,8 +294,8 @@ class ExportService {
 
     private func makeCSV(doc: TranslatedDocument, name: String) async throws -> URL {
         let url = tmp(name, "csv")
-        let orig  = doc.originalText.components(separatedBy: "\n")
-        let trans = doc.translatedText.components(separatedBy: "\n")
+        let orig  = DocumentPageBreak.displayText(doc.originalText).components(separatedBy: "\n")
+        let trans = DocumentPageBreak.displayText(doc.translatedText).components(separatedBy: "\n")
         var csv = "Original,Translated\n"
         for i in 0..<max(orig.count, trans.count) {
             let o = i < orig.count  ? orig[i].replacingOccurrences(of: "\"", with: "\"\"") : ""
@@ -298,8 +319,18 @@ class ExportService {
     }
 
     func renderTextPages(_ doc: TranslatedDocument) -> [UIImage] {
+        let bodies = doc.translatedPageTexts
+        let hasExplicitPages = doc.translatedText.contains(DocumentPageBreak.marker) || bodies.count == max(doc.pageCount, 1)
+        if hasExplicitPages, !bodies.isEmpty {
+            let total = max(bodies.count, doc.pageCount, 1)
+            return (0..<total).map { index in
+                let body = index < bodies.count ? bodies[index] : ""
+                return renderTextPage(doc, body: body, page: index + 1, total: total)
+            }
+        }
+
         let pageCount = max(doc.pageCount, 1)
-        let paragraphs = doc.translatedText.components(separatedBy: "\n")
+        let paragraphs = DocumentPageBreak.displayText(doc.translatedText).components(separatedBy: "\n")
         let chunkSize = max(1, Int(ceil(Double(max(paragraphs.count, 1)) / Double(pageCount))))
         var pages: [UIImage] = []
         var index = 0
@@ -311,7 +342,7 @@ class ExportService {
             index += chunkSize
             if index >= paragraphs.count { break }
         }
-        return pages.isEmpty ? [renderTextPage(doc, body: doc.translatedText, page: 1, total: 1)] : pages
+        return pages.isEmpty ? [renderTextPage(doc, body: DocumentPageBreak.displayText(doc.translatedText), page: 1, total: 1)] : pages
     }
 
     private func renderTextPage(_ doc: TranslatedDocument, body: String, page: Int, total: Int) -> UIImage {

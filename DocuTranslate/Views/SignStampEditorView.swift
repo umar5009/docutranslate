@@ -3,7 +3,7 @@ import PencilKit
 
 struct SignStampEditorView: View {
     @State private var pages: [UIImage]
-    let pageIndex: Int
+    @State private var currentPage: Int
     let documentID: UUID
     let onBrandingRemoved: (() -> Void)?
     let onComplete: ([UIImage]) -> Void
@@ -53,7 +53,7 @@ struct SignStampEditorView: View {
         onComplete: @escaping ([UIImage]) -> Void
     ) {
         _pages = State(initialValue: pages)
-        self.pageIndex = pageIndex
+        _currentPage = State(initialValue: min(max(pageIndex, 0), max(pages.count - 1, 0)))
         self.documentID = documentID
         self.onBrandingRemoved = onBrandingRemoved
         self.onComplete = onComplete
@@ -61,8 +61,8 @@ struct SignStampEditorView: View {
     }
 
     private var pageImage: UIImage {
-        guard pageIndex < pages.count else { return pages.first ?? UIImage() }
-        return pages[pageIndex]
+        guard currentPage < pages.count else { return pages.first ?? UIImage() }
+        return pages[currentPage]
     }
 
     var body: some View {
@@ -71,6 +71,9 @@ struct SignStampEditorView: View {
                 VStack(spacing: 0) {
                     documentPreview
                         .frame(height: max(160, min(geo.size.height * 0.4, 360)))
+                    if pages.count > 1 {
+                        pageNavigator
+                    }
                     controlPanel
                 }
             }
@@ -158,6 +161,7 @@ struct SignStampEditorView: View {
                 Image(uiImage: pageImage)
                     .resizable()
                     .scaledToFit()
+                    .id(currentPage)
                     .background(
                         GeometryReader { imgGeo in
                             Color.clear.onAppear { previewSize = imgGeo.size }
@@ -177,10 +181,92 @@ struct SignStampEditorView: View {
                                 .padding(.bottom, max(6, previewSize.height * 0.02))
                         }
                     }
+                    .overlay(alignment: .topTrailing) {
+                        if pages.count > 1 {
+                            Text("Page \(currentPage + 1) of \(pages.count)")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(8)
+                        }
+                    }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private var pageNavigator: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 16) {
+                Button {
+                    AppAnalytics.tap("sign_prev_page")
+                    goToPage(currentPage - 1)
+                } label: {
+                    Image(systemName: "chevron.left.circle.fill")
+                        .font(.title2)
+                }
+                .disabled(currentPage <= 0)
+
+                Text("Page \(currentPage + 1) of \(pages.count)")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minWidth: 120)
+
+                Button {
+                    AppAnalytics.tap("sign_next_page")
+                    goToPage(currentPage + 1)
+                } label: {
+                    Image(systemName: "chevron.right.circle.fill")
+                        .font(.title2)
+                }
+                .disabled(currentPage >= pages.count - 1)
+            }
+            .foregroundColor(.blue)
+            .padding(.top, 8)
+
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(pages.indices, id: \.self) { index in
+                            Button {
+                                AppAnalytics.tap("sign_page_thumb", ["page": index + 1])
+                                goToPage(index)
+                            } label: {
+                                Image(uiImage: pages[index])
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 44, height: 58)
+                                    .clipped()
+                                    .background(Color.white)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .strokeBorder(
+                                                index == currentPage ? Color.blue : Color.secondary.opacity(0.35),
+                                                lineWidth: index == currentPage ? 2.5 : 1
+                                            )
+                                    )
+                                    .cornerRadius(6)
+                            }
+                            .buttonStyle(.plain)
+                            .id(index)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                }
+                .onAppear { proxy.scrollTo(currentPage, anchor: .center) }
+                .onChange(of: currentPage) { _, page in
+                    withAnimation { proxy.scrollTo(page, anchor: .center) }
+                }
+            }
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private func goToPage(_ index: Int) {
+        guard pages.count > 1 else { return }
+        currentPage = min(max(index, 0), pages.count - 1)
     }
 
     @ViewBuilder
@@ -1092,7 +1178,7 @@ struct SignStampEditorView: View {
 
         let indices = applyToAllPages
             ? Array(pages.indices)
-            : [min(pageIndex, max(pages.count - 1, 0))]
+            : [min(currentPage, max(pages.count - 1, 0))]
 
         var updated = pages
         for idx in indices where idx < updated.count {

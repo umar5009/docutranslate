@@ -22,11 +22,10 @@ class TranslateViewModel: ObservableObject {
     @Published var showFilePicker = false
     @Published var showSourcePicker = false
     @Published var showTargetPicker = false
-    @Published var showExportSheet = false
     @Published var showError = false
     @Published var errorMessage = ""
-    @Published var selectedExportFormat: ExportFormat?
     @Published var exportImages: [UIImage] = []
+    @Published var statusDetail: String = ""
 
     private let svc = TranslationService.shared
     private let proc = DocumentProcessor.shared
@@ -42,7 +41,11 @@ class TranslateViewModel: ObservableObject {
         isTranslating = true
         translationProgress = 0
         currentStep = .uploading
-        defer { isTranslating = false }
+        statusDetail = ""
+        defer {
+            isTranslating = false
+            statusDetail = ""
+        }
 
         do {
             var text = inputText
@@ -60,6 +63,10 @@ class TranslateViewModel: ObservableObject {
                 throw TranslationError.emptyText
             }
 
+            var pageTexts = DocumentPageBreak.split(text)
+            if pageTexts.isEmpty { pageTexts = [text] }
+            pageCount = max(pageCount, pageTexts.count)
+
             if autoDetect {
                 currentStep = .detecting
                 translationProgress = 0.3
@@ -68,16 +75,31 @@ class TranslateViewModel: ObservableObject {
                 }
             }
 
-            let translated = try await svc.translate(
-                text: text,
-                from: sourceLanguage,
-                to: targetLanguage,
-                detectSource: autoDetect
-            ) { [weak self] step in
-                Task { @MainActor [weak self] in
-                    self?.currentStep = step
-                    self?.translationProgress = step.progress
-                }
+            let progressHandler: (TranslationStep, Double) -> Void = { [weak self] step, fraction in
+                self?.currentStep = step
+                self?.translationProgress = fraction
+                self?.statusDetail = self?.svc.statusDetail ?? ""
+            }
+
+            let translated: String
+            if pageTexts.count > 1 {
+                let translatedPages = try await svc.translatePages(
+                    pageTexts,
+                    from: sourceLanguage,
+                    to: targetLanguage,
+                    detectSource: false,
+                    progressHandler: progressHandler
+                )
+                translated = DocumentPageBreak.join(translatedPages)
+                pageCount = max(pageCount, translatedPages.count)
+            } else {
+                translated = try await svc.translate(
+                    text: text,
+                    from: sourceLanguage,
+                    to: targetLanguage,
+                    detectSource: autoDetect,
+                    progressHandler: progressHandler
+                )
             }
 
             currentStep = .complete

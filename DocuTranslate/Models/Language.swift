@@ -18,9 +18,10 @@ struct Language: Identifiable, Hashable, Codable {
 
     // MARK: - All Supported Languages
     static let all: [Language] = [
-        Language(id: "en",  name: "English",             nativeName: "English",              flag: "🇬🇧", code: "en", translationCode: "en"),
+        Language(id: "en",    name: "English (UK)",        nativeName: "English (UK)",         flag: "🇬🇧", code: "en", translationCode: "en-GB"),
+        Language(id: "en-US", name: "English (US)",        nativeName: "English (US)",         flag: "🇺🇸", code: "en-US", translationCode: "en-US"),
         Language(id: "pl",  name: "Polish",               nativeName: "Polski",               flag: "🇵🇱", code: "pl", translationCode: "pl"),
-        Language(id: "cs",  name: "Czech",                nativeName: "Čeština",              flag: "🇨🇿", code: "cs", translationCode: "cs"),
+        Language(id: "cs",  name: "Czech",                nativeName: "Čeština",              flag: "🇨🇿", code: "cs", translationCode: "cs-CZ"),
         Language(id: "sv",  name: "Swedish",              nativeName: "Svenska",              flag: "🇸🇪", code: "sv", translationCode: "sv"),
         Language(id: "de",  name: "German",               nativeName: "Deutsch",              flag: "🇩🇪", code: "de", translationCode: "de"),
         Language(id: "fr",  name: "French",               nativeName: "Français",             flag: "🇫🇷", code: "fr", translationCode: "fr"),
@@ -82,6 +83,7 @@ struct Language: Identifiable, Hashable, Codable {
 
     static let popular: [Language] = [
         all.first(where: { $0.id == "en" })!,
+        all.first(where: { $0.id == "en-US" })!,
         all.first(where: { $0.id == "pl" })!,
         all.first(where: { $0.id == "cs" })!,
         all.first(where: { $0.id == "sv" })!,
@@ -102,12 +104,16 @@ struct Language: Identifiable, Hashable, Codable {
         all.first(where: { $0.id == "en" })!
     }
 
+    var isEnglish: Bool {
+        id == "en" || id == "en-US" || code.hasPrefix("en")
+    }
+
     /// Device language when it is not English, otherwise Spanish so EN→EN is not the default.
     static var preferredTarget: Language {
         let code = Locale.current.language.languageCode?.identifier
             ?? Locale.current.identifier.split(separator: "-").first.map(String.init)
             ?? "en"
-        if let match = find(by: code), match.id != "en" {
+        if let match = find(by: code), !match.isEnglish {
             return match
         }
         return find(by: "es") ?? find(by: "pl") ?? all[1]
@@ -119,6 +125,8 @@ struct Language: Identifiable, Hashable, Codable {
         case "zh": return "zh-CN"
         case "zh-TW": return "zh-TW"
         case "nb": return "no"
+        case "en-US": return "en"
+        case "en": return "en-GB"
         default: return code
         }
     }

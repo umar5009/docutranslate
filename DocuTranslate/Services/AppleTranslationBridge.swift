@@ -43,8 +43,26 @@ final class AppleTranslationRuntime: ObservableObject {
 
     private var continuation: CheckedContinuation<String, Error>?
     private var pendingText: String?
+    /// On-device translation can wait forever for a language download or a SwiftUI session that never starts.
+    static let requestTimeout: TimeInterval = 12
 
     private init() {}
+
+    func failPending(_ error: Error) {
+        finish(.failure(error))
+    }
+
+    private func finish(_ result: Result<String, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        pendingText = nil
+        switch result {
+        case .success(let value):
+            continuation.resume(returning: value)
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
 
     func translate(
         _ text: String,
@@ -52,29 +70,51 @@ final class AppleTranslationRuntime: ObservableObject {
         to target: Language,
         detectSource: Bool
     ) async throws -> String {
+        try await withThrowingTaskGroup(of: String.self) { group in
+            group.addTask { @MainActor in
+                try await self.startSession(
+                    text,
+                    from: source,
+                    to: target,
+                    detectSource: detectSource
+                )
+            }
+            group.addTask { @MainActor in
+                try await Task.sleep(nanoseconds: UInt64(Self.requestTimeout * 1_000_000_000))
+                self.failPending(CancellationError())
+                throw CancellationError()
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else {
+                throw CancellationError()
+            }
+            return result
+        }
+    }
+
+    private func startSession(
+        _ text: String,
+        from source: Language,
+        to target: Language,
+        detectSource: Bool
+    ) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
-            self.continuation?.resume(throwing: CancellationError())
+            failPending(CancellationError())
             self.continuation = continuation
             self.pendingText = text
 
             let sourceLanguage: Locale.Language? = detectSource
                 ? nil
                 : Locale.Language(identifier: source.translationCode)
-            let config = TranslationSession.Configuration(
+            configuration = TranslationSession.Configuration(
                 source: sourceLanguage,
                 target: Locale.Language(identifier: target.translationCode)
             )
-            if configuration != nil {
-                configuration?.invalidate()
-            }
-            configuration = config
         }
     }
 
     func handle(_ session: TranslationSession) async {
-        guard let continuation, let text = pendingText else { return }
-        self.continuation = nil
-        pendingText = nil
+        guard let text = pendingText else { return }
 
         do {
             try await session.prepareTranslation()
@@ -82,12 +122,13 @@ final class AppleTranslationRuntime: ObservableObject {
             var parts: [String] = []
             parts.reserveCapacity(chunks.count)
             for chunk in chunks {
+                try Task.checkCancellation()
                 let response = try await session.translate(chunk)
                 parts.append(response.targetText)
             }
-            continuation.resume(returning: parts.joined(separator: "\n"))
+            finish(.success(parts.joined(separator: "\n")))
         } catch {
-            continuation.resume(throwing: error)
+            finish(.failure(error))
         }
     }
 }

@@ -72,16 +72,6 @@ struct ScanView: View {
             .onChange(of: vm.photoPickerItems) { items in
                 Task { await vm.loadPhotos(from: items) }
             }
-            .alert("Saved", isPresented: $vm.showExportSuccess) {
-                Button("OK", role: .cancel, action: AppAnalytics.action("scan_export_ok") {})
-            } message: {
-                Text(vm.exportSuccessMessage)
-            }
-            .alert("Export Failed", isPresented: $vm.showExportError) {
-                Button("OK", role: .cancel, action: AppAnalytics.action("scan_export_error_ok") {})
-            } message: {
-                Text(vm.exportErrorMessage)
-            }
         }
     }
 
@@ -454,24 +444,20 @@ struct ScanView: View {
                 }
 
                 Button {
-                    AppAnalytics.tap("scan_export")
-                    vm.showExportOptions = true
+                    AppAnalytics.tap("scan_save_history")
+                    Task {
+                        if let doc = await vm.exportToHistory() {
+                            appState.revealSavedDocument(doc)
+                        }
+                    }
                 } label: {
-                    Label("Export", systemImage: "square.and.arrow.up")
+                    Label("Save", systemImage: "clock.arrow.circlepath")
                         .font(.headline)
                         .foregroundColor(.blue)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(Color.blue.opacity(0.1))
                         .cornerRadius(14)
-                }
-                .confirmationDialog("Export As", isPresented: $vm.showExportOptions) {
-                    ForEach(ExportFormat.allCases) { fmt in
-                        Button(fmt.rawValue, action: AppAnalytics.action("scan_export_format", ["format": fmt.rawValue]) {
-                            Task { await vm.export(as: fmt) }
-                        })
-                    }
-                    Button("Cancel", role: .cancel, action: AppAnalytics.action("scan_export_cancel") {})
                 }
             }
         }

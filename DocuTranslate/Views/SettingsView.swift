@@ -11,7 +11,7 @@ struct SettingsView: View {
 
     @State private var showSourcePicker = false
     @State private var showTargetPicker = false
-    @State private var sourceLanguage = Language.all.first(where: { $0.code == "en" })!
+    @State private var sourceLanguage = Language.english
     @State private var targetLanguage = Language.all.first(where: { $0.code == "pl" })!
     @State private var showAbout = false
     @ObservedObject private var push = PushNotificationService.shared
@@ -126,9 +126,9 @@ struct SettingsView: View {
                 Section {
                     ExportLocationSection()
                 } header: {
-                    Text("Export Location")
+                    Text("Saved Documents")
                 } footer: {
-                    Text("PDF, Word, TXT, and CSV files are saved to the Files app. JPEG and PNG images are saved to Photos — one image per page.")
+                    Text("Documents stay in History. Use Share from a document to send a PDF or save a copy to Files.")
                 }
 
                 // App settings
@@ -232,11 +232,18 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Link(destination: URL(string: "https://www.apple.com/legal/privacy/")!) {
+                    Link(destination: LegalURLs.privacy) {
                         SettingsRow(icon: "hand.raised.fill", iconColor: .gray, title: "Privacy Policy", value: "")
                     }
                     .simultaneousGesture(TapGesture().onEnded {
                         AppAnalytics.tap("settings_privacy")
+                    })
+
+                    Link(destination: URL(string: "https://github.com/umar5009/docutranslate-privacy-support-page/blob/main/SUPPORT.md")!) {
+                        SettingsRow(icon: "questionmark.circle.fill", iconColor: .teal, title: "Support", value: "")
+                    }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        AppAnalytics.tap("settings_support")
                     })
                 } header: {
                     Text("About")
@@ -428,59 +435,18 @@ struct TechRow: View {
 }
 
 struct ExportLocationSection: View {
-    @State private var savedFiles: [URL] = []
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Documents (PDF, Word, TXT…)")
-                        .font(.subheadline.weight(.medium))
-                    Text("Files → On My iPhone → DocuTranslate → Exports")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            } icon: {
-                Image(systemName: "folder.fill")
-                    .foregroundColor(.blue)
-            }
-
-            Label {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Images (JPEG, PNG)")
-                        .font(.subheadline.weight(.medium))
-                    Text("Photos app → Recents")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            } icon: {
-                Image(systemName: "photo.on.rectangle.angled")
-                    .foregroundColor(.pink)
-            }
-
-            if savedFiles.isEmpty {
-                Text("No exported documents yet")
+        Label {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("History")
+                    .font(.subheadline.weight(.medium))
+                Text("Saved scans, translations, and signed pages appear in the History tab. Share from there when you want a file.")
                     .font(.caption)
                     .foregroundColor(.secondary)
-            } else {
-                Text("Recent exports")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-
-                ForEach(savedFiles.prefix(5), id: \.path) { url in
-                    HStack {
-                        Image(systemName: "doc.fill")
-                            .foregroundColor(.blue)
-                        Text(url.lastPathComponent)
-                            .font(.caption)
-                            .lineLimit(1)
-                        Spacer()
-                    }
-                }
             }
-        }
-        .onAppear {
-            savedFiles = ExportService.shared.listSavedDocuments()
+        } icon: {
+            Image(systemName: "clock.arrow.circlepath")
+                .foregroundColor(.orange)
         }
     }
 }

@@ -39,6 +39,14 @@ final class BrandingStore: ObservableObject {
         }
     }
 
+    func logPurchaseButtonClick(source: String) {
+        AppAnalytics.tap("branding_buy", [
+            "product": Self.productID,
+            "price": priceText,
+            "source": source
+        ])
+    }
+
     func purchaseRemoval(for documentID: UUID) async throws {
         isLoading = true
         defer { isLoading = false }
@@ -108,6 +116,37 @@ enum BrandingPurchaseError: LocalizedError {
     }
 }
 
+enum LegalURLs {
+    static let privacy = URL(string: "https://github.com/umar5009/docutranslate-privacy-support-page/blob/main/PRIVACY.md")!
+    static let termsOfUse = URL(string: "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/")!
+}
+
+struct PurchaseLegalLinks: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("By purchasing, you agree to the Terms of Use (EULA) and Privacy Policy.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            HStack(spacing: 6) {
+                Link("Privacy Policy", destination: LegalURLs.privacy)
+                    .simultaneousGesture(TapGesture().onEnded {
+                        AppAnalytics.tap("purchase_privacy")
+                    })
+                Text("·")
+                    .foregroundColor(.secondary)
+                Link("Terms of Use (EULA)", destination: LegalURLs.termsOfUse)
+                    .simultaneousGesture(TapGesture().onEnded {
+                        AppAnalytics.tap("purchase_eula")
+                    })
+            }
+            .font(.caption.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 struct RemoveTagPaymentSheet: View {
     let documentID: UUID
     var onPurchased: () -> Void
@@ -133,7 +172,7 @@ struct RemoveTagPaymentSheet: View {
                     .multilineTextAlignment(.center)
 
                 Button {
-                    AppAnalytics.tap("branding_buy")
+                    store.logPurchaseButtonClick(source: "sheet")
                     Task { await buy() }
                 } label: {
                     HStack {
@@ -150,6 +189,8 @@ struct RemoveTagPaymentSheet: View {
                     .cornerRadius(12)
                 }
                 .disabled(store.isLoading)
+
+                PurchaseLegalLinks()
 
                 Spacer()
             }
@@ -202,7 +243,7 @@ struct RemoveBrandingBanner: View {
                     .foregroundColor(.secondary)
 
                 Button {
-                    AppAnalytics.tap("branding_buy")
+                    store.logPurchaseButtonClick(source: "banner")
                     Task { await buy() }
                 } label: {
                     HStack {
@@ -219,6 +260,8 @@ struct RemoveBrandingBanner: View {
                     .cornerRadius(12)
                 }
                 .disabled(store.isLoading)
+
+                PurchaseLegalLinks()
             }
             .padding()
             .background(Color.orange.opacity(0.12))

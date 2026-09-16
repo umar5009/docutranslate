@@ -20,6 +20,11 @@ class DocumentProcessor {
             return (result.text, result.pages, .pdf)
         case "docx", "doc":
             return (try await extractFromOfficeXML(url: url), 1, .word)
+        case "svg", "xml", "html", "htm":
+            let text = (try? String(contentsOf: url, encoding: .utf8))
+                    ?? (try? String(contentsOf: url, encoding: .isoLatin1))
+                    ?? ""
+            return (text, 1, .text)
         case "txt", "md", "rtf":
             let text = (try? String(contentsOf: url, encoding: .utf8))
                     ?? (try? String(contentsOf: url, encoding: .isoLatin1))
@@ -72,16 +77,22 @@ class DocumentProcessor {
     private func extractFromPDF(url: URL) async throws -> (text: String, pages: Int) {
         guard let pdf = PDFDocument(url: url) else { throw TranslationError.extractionFailed }
         let count = pdf.pageCount
-        var full = ""
+        var pages: [String] = []
+        pages.reserveCapacity(count)
         for i in 0..<count {
-            guard let page = pdf.page(at: i) else { continue }
+            guard let page = pdf.page(at: i) else {
+                pages.append("")
+                continue
+            }
             if let native = page.string, !native.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                full += native + "\n\n"
+                pages.append(native)
             } else if let img = renderPage(page) {
-                let ocr = (try? await performOCR(on: img)) ?? ""
-                full += ocr + "\n\n"
+                pages.append((try? await performOCR(on: img)) ?? "")
+            } else {
+                pages.append("")
             }
         }
+        let full = DocumentPageBreak.join(pages)
         if full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { throw TranslationError.extractionFailed }
         return (full, count)
     }
