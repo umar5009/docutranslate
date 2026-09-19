@@ -3,7 +3,6 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject var appState: AppState
     @State private var showDocumentPicker = false
-    @State private var selectedDocument: TranslatedDocument?
 
     var body: some View {
         NavigationView {
@@ -40,12 +39,6 @@ struct HomeView: View {
                     }
                 }
             }
-            .sheet(item: $selectedDocument) { doc in
-                HistoryDocumentViewer(
-                    document: doc,
-                    images: appState.images(for: doc)
-                )
-            }
         }
     }
 
@@ -68,7 +61,7 @@ struct HomeView: View {
                     .font(.title2.bold())
                     .foregroundColor(.white)
 
-                Text("60+ languages • Scan, sign, stamp & export")
+                Text("60+ languages • Scan, edit, highlight, sign & export")
                     .font(.subheadline)
                     .foregroundColor(.white.opacity(0.75))
 
@@ -138,6 +131,20 @@ struct HomeView: View {
                 }
 
                 QuickActionCard(
+                    icon: "pencil",
+                    title: "Edit & Highlight",
+                    subtitle: "Text, shapes, markup",
+                    color: Color(hex: "#FF375F")
+                ) {
+                    AppAnalytics.tap("home_edit_document")
+                    if appState.recentDocuments.isEmpty {
+                        appState.currentTab = .scan
+                    } else {
+                        appState.currentTab = .history
+                    }
+                }
+
+                QuickActionCard(
                     icon: "clock.arrow.circlepath",
                     title: "View History",
                     subtitle: "Recent translations",
@@ -185,7 +192,7 @@ struct HomeView: View {
             ForEach(appState.recentDocuments.prefix(3)) { doc in
                 Button {
                     AppAnalytics.tap("home_open_recent", ["file": doc.fileName])
-                    selectedDocument = doc
+                    appState.openDocument(doc)
                 } label: {
                     DocumentRowCard(document: doc)
                 }

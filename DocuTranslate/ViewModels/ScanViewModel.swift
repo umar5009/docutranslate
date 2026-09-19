@@ -13,6 +13,8 @@ class ScanViewModel: ObservableObject {
     @Published var showCropEditor = false
     @Published var showTranslateSheet = false
     @Published var showSignStampEditor = false
+    @Published var showDocumentEditor = false
+    @Published var documentEditorMode: DocumentEditorMode = .edit
     @Published var showActionSheet = false
 
     @Published var editingPageIndex: Int?
@@ -181,11 +183,11 @@ class ScanViewModel: ObservableObject {
         return doc
     }
 
-    func persistToHistory(signed: Bool, images: [UIImage]? = nil) {
+    func persistToHistory(signed: Bool, images: [UIImage]? = nil, edited: Bool = false) {
         let pages = images ?? session.pages.map(\.displayImage)
         guard !pages.isEmpty else { return }
         let english = Language.all.first { $0.id == "en" } ?? Language.all[0]
-        let doc = TranslatedDocument(
+        var doc = TranslatedDocument(
             id: session.id,
             fileName: signed ? "Signed_Document" : "Scanned_Document",
             originalLanguage: english,
@@ -195,6 +197,7 @@ class ScanViewModel: ObservableObject {
             originalText: "",
             pageCount: pages.count
         )
+        if edited { doc.wasEdited = true }
         HistoryStore.shared.add(doc, images: pages, signed: signed)
     }
 

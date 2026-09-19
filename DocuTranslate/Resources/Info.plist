@@ -20,6 +20,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
@@ -28,19 +30,17 @@
 	<string>DocuTranslate uses your camera to scan documents and photograph stamps.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>DocuTranslate uses the microphone for document scanning and spoken stamp prompts.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>DocuTranslate converts your spoken prompt into a custom stamp.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>DocuTranslate can save translated document previews to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>DocuTranslate needs photo library access to import documents for translation.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>DocuTranslate converts your spoken prompt into a custom stamp.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
-	<key>FirebaseAppDelegateProxyEnabled</key>
-	<false/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

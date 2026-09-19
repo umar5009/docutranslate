@@ -66,6 +66,22 @@ struct ScanView: View {
                     }
                 }
             }
+            .fullScreenCover(isPresented: $vm.showDocumentEditor) {
+                if let idx = vm.currentPageIndex {
+                    DocumentEditorView(
+                        pages: vm.session.pages.map(\.displayImage),
+                        pageIndex: idx,
+                        fileName: "Scanned_Document",
+                        documentID: vm.session.id,
+                        initialMode: vm.documentEditorMode
+                    ) { edited in
+                        for i in edited.indices where i < vm.session.pages.count {
+                            vm.session.pages[i].processedImage = edited[i]
+                        }
+                        vm.persistToHistory(signed: false, images: edited, edited: true)
+                    }
+                }
+            }
             .sheet(isPresented: $vm.showTranslateSheet) {
                 ScanTranslateView(vm: vm)
             }
@@ -416,6 +432,19 @@ struct ScanView: View {
 
     private var editorActionBar: some View {
         VStack(spacing: 10) {
+            DocumentEditorLaunchRow(
+                onEdit: {
+                    AppAnalytics.tap("scan_edit_document")
+                    vm.documentEditorMode = .edit
+                    vm.showDocumentEditor = true
+                },
+                onHighlight: {
+                    AppAnalytics.tap("scan_highlight_document")
+                    vm.documentEditorMode = .markup
+                    vm.showDocumentEditor = true
+                }
+            )
+
             Button {
                 AppAnalytics.tap("scan_sign_stamp")
                 vm.showSignStampEditor = true

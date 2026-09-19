@@ -44,6 +44,9 @@
 		C2D3E4F5A6B7489901ABCDEF /* SignStampEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3F4A5B6C7D849001ABCDEF0 /* SignStampEditorView.swift */; };
 		C52D3E4F5061728394A5B6C7 /* ConvertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B41C2D3E4F5061728394A5B7 /* ConvertView.swift */; };
 		C9D0E1F2A3B4567890123456 /* TranslatedDocumentPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E1F2A3B4C5678901234567 /* TranslatedDocumentPreview.swift */; };
+		D0CED17E01A64B01000002 /* DocumentEditorModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0CED17E01A64B01000001 /* DocumentEditorModels.swift */; };
+		D0CED17E01A64B01000004 /* DocumentEditorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0CED17E01A64B01000003 /* DocumentEditorService.swift */; };
+		D0CED17E01A64B01000006 /* DocumentEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0CED17E01A64B01000005 /* DocumentEditorView.swift */; };
 		D3E4F5A6B7C849012345678 /* FullScreenSignatureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4F5A6B7C8D940123456789 /* FullScreenSignatureView.swift */; };
 		D4E5F6A7B8C940234567890 /* StampImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5A6B7C8D9E041345678901 /* StampImportView.swift */; };
 		E12D2238DCA945DCA797D35D /* DocumentProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A43B7B37BE14FE99C0111E8 /* DocumentProcessor.swift */; };
@@ -84,6 +87,9 @@
 		B8C9D0E1F234567890123456 /* AnimatedSplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedSplashView.swift; sourceTree = "<group>"; };
 		BF7E8FF031EE46EF9D6B5F42 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		C421C1E74C2D428C927FB147 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		D0CED17E01A64B01000001 /* DocumentEditorModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditorModels.swift; sourceTree = "<group>"; };
+		D0CED17E01A64B01000003 /* DocumentEditorService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditorService.swift; sourceTree = "<group>"; };
+		D0CED17E01A64B01000005 /* DocumentEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentEditorView.swift; sourceTree = "<group>"; };
 		D0E1F2A3B4C5678901234567 /* TranslatedDocumentPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslatedDocumentPreview.swift; sourceTree = "<group>"; };
 		D2E3F4A5B6C7489901ABCDEF /* SignStampService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignStampService.swift; sourceTree = "<group>"; };
 		D33E4F5061728394A5B6C7D8 /* ReviewPromptService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewPromptService.swift; sourceTree = "<group>"; };
@@ -115,6 +121,7 @@
 			children = (
 				5C59FD2234D847F6AE6C736C /* ContentView.swift */,
 				99BAC1C15D724397BEC4C0CC /* CropEditorView.swift */,
+				D0CED17E01A64B01000005 /* DocumentEditorView.swift */,
 				9E9995AA94784839AD73019E /* HistoryView.swift */,
 				C421C1E74C2D428C927FB147 /* HomeView.swift */,
 				F500F27C823A44128DD30A47 /* LanguagePickerSheet.swift */,
@@ -137,6 +144,7 @@
 			isa = PBXGroup;
 			children = (
 				0A43B7B37BE14FE99C0111E8 /* DocumentProcessor.swift */,
+				D0CED17E01A64B01000003 /* DocumentEditorService.swift */,
 				EB2C743D33DA4EFF9ADA7E02 /* ExportService.swift */,
 				D2E3F4A5B6C7489901ABCDEF /* SignStampService.swift */,
 				A11C4A7B9E2F4D81B3C5D608 /* StampPromptService.swift */,
@@ -173,6 +181,7 @@
 			children = (
 				BF7E8FF031EE46EF9D6B5F42 /* AppState.swift */,
 				6B91EFD086D54B0E8C5E68AE /* DocumentModels.swift */,
+				D0CED17E01A64B01000001 /* DocumentEditorModels.swift */,
 				D74E72D26FBB405D9F299FF9 /* Language.swift */,
 			);
 			path = Models;
@@ -297,8 +306,10 @@
 				68B385A125D9428288546C4F /* DocuTranslateApp.swift in Sources */,
 				92CD6BAE2D0747168D007A55 /* AppState.swift in Sources */,
 				9417786C384D4626AF0E2A4E /* DocumentModels.swift in Sources */,
+				D0CED17E01A64B01000002 /* DocumentEditorModels.swift in Sources */,
 				AEC1651DC26D49B8803598C7 /* Language.swift in Sources */,
 				E12D2238DCA945DCA797D35D /* DocumentProcessor.swift in Sources */,
+				D0CED17E01A64B01000004 /* DocumentEditorService.swift in Sources */,
 				BD2AAD16917A4AD0BE049912 /* ExportService.swift in Sources */,
 				C1D2E3F4A5B6478990ABCDEF /* SignStampService.swift in Sources */,
 				A11C4A7B9E2F4D81B3C5D607 /* StampPromptService.swift in Sources */,
@@ -323,6 +334,7 @@
 				C52D3E4F5061728394A5B6C7 /* ConvertView.swift in Sources */,
 				466B163D828D4E0E9BF23CB4 /* ContentView.swift in Sources */,
 				84909635238C48B1B2DC6E1F /* CropEditorView.swift in Sources */,
+				D0CED17E01A64B01000006 /* DocumentEditorView.swift in Sources */,
 				9F347A8C795445DB962A16FF /* HistoryView.swift in Sources */,
 				7DF2BE837E6D433C9AE367C6 /* HomeView.swift in Sources */,
 				719034DE66924153B72F13AC /* LanguagePickerSheet.swift in Sources */,
@@ -339,6 +351,7 @@
 		1097BAC1E4E64B7199388066 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DocuTranslate/DocuTranslate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
@@ -346,9 +359,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = DocuTranslate/Resources/Info.plist;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_BUNDLE_IDENTIFIER = com.docutranslate.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -386,6 +398,7 @@
 		BB240E73968D47859F3E3C05 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = DocuTranslate/DocuTranslate.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
@@ -393,9 +406,8 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = DocuTranslate/Resources/Info.plist;
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				OTHER_LDFLAGS = "-ObjC";
 				PRODUCT_BUNDLE_IDENTIFIER = com.docutranslate.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";

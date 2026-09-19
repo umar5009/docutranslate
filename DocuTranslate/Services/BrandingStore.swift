@@ -228,52 +228,111 @@ struct RemoveTagPaymentSheet: View {
 
 struct RemoveBrandingBanner: View {
     @Binding var document: TranslatedDocument
+    var compact: Bool = false
     var onRemoved: ((TranslatedDocument) -> Void)? = nil
 
     @ObservedObject private var store = BrandingStore.shared
     @State private var errorMessage: String?
+    @State private var expanded = false
 
     var body: some View {
         if document.showsBrandingTag {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Tagged “\(DocumentBranding.tag)”")
-                    .font(.subheadline.weight(.semibold))
-                Text("Converted, signed, and scanned files include this small footer. Pay \(store.priceText) to remove it from this document only.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+            if compact && !expanded {
+                compactBanner
+            } else {
+                fullBanner
+            }
+        }
+    }
 
+    private var compactBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "tag.fill")
+                .font(.caption)
+            Text("Tagged")
+                .font(.caption.weight(.semibold))
+            Spacer()
+            Button("Remove \(store.priceText)") {
+                store.logPurchaseButtonClick(source: "banner")
+                Task { await buy() }
+            }
+            .font(.caption.weight(.semibold))
+            Button {
+                withAnimation { expanded = true }
+            } label: {
+                Image(systemName: "info.circle")
+            }
+            .font(.caption)
+        }
+        .foregroundColor(.orange)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
+        .cornerRadius(10)
+        .alert("Purchase", isPresented: .init(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel, action: AppAnalytics.action("branding_error_ok") {})
+        } message: {
+            Text(errorMessage ?? "")
+        }
+    }
+
+    private var fullBanner: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if compact {
                 Button {
-                    store.logPurchaseButtonClick(source: "banner")
-                    Task { await buy() }
+                    withAnimation { expanded = false }
                 } label: {
                     HStack {
-                        if store.isLoading {
-                            ProgressView().tint(.white)
-                        }
-                        Text("Remove tag — \(store.priceText)")
+                        Text("Tagged “\(DocumentBranding.tag)”")
                             .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Image(systemName: "chevron.up")
+                            .font(.caption)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(12)
                 }
-                .disabled(store.isLoading)
+                .foregroundColor(.primary)
+            } else {
+                Text("Tagged “\(DocumentBranding.tag)”")
+                    .font(.subheadline.weight(.semibold))
+            }
+            Text("Converted, signed, and scanned files include this small footer. Pay \(store.priceText) to remove it from this document only.")
+                .font(.caption)
+                .foregroundColor(.secondary)
 
-                PurchaseLegalLinks()
+            Button {
+                store.logPurchaseButtonClick(source: "banner")
+                Task { await buy() }
+            } label: {
+                HStack {
+                    if store.isLoading {
+                        ProgressView().tint(.white)
+                    }
+                    Text("Remove tag — \(store.priceText)")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(Color.blue)
+                .foregroundColor(.white)
+                .cornerRadius(12)
             }
-            .padding()
-            .background(Color.orange.opacity(0.12))
-            .cornerRadius(14)
-            .alert("Purchase", isPresented: .init(
-                get: { errorMessage != nil },
-                set: { if !$0 { errorMessage = nil } }
-            )) {
-                Button("OK", role: .cancel, action: AppAnalytics.action("branding_error_ok") {})
-            } message: {
-                Text(errorMessage ?? "")
-            }
+            .disabled(store.isLoading)
+
+            PurchaseLegalLinks()
+        }
+        .padding()
+        .background(Color.orange.opacity(0.12))
+        .cornerRadius(14)
+        .alert("Purchase", isPresented: .init(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel, action: AppAnalytics.action("branding_error_ok") {})
+        } message: {
+            Text(errorMessage ?? "")
         }
     }
 

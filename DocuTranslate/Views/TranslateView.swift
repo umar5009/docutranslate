@@ -6,6 +6,8 @@ struct TranslateView: View {
     @StateObject private var vm = TranslateViewModel()
     @State private var showSignStampPrompt = false
     @State private var showSignStampEditor = false
+    @State private var showDocumentEditor = false
+    @State private var editorMode: DocumentEditorMode = .edit
     @State private var isExporting = false
 
     var body: some View {
@@ -60,6 +62,25 @@ struct TranslateView: View {
                         vm.translatedDocument = updated
                         vm.translationResult = updated
                         appState.addDocument(updated, images: signed, signed: true)
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showDocumentEditor) {
+                if let doc = vm.translatedDocument ?? vm.translationResult {
+                    DocumentEditorView(
+                        pages: ExportService.shared.imagesForSigning(doc, existing: vm.exportImages),
+                        pageIndex: 0,
+                        fileName: doc.fileName,
+                        documentID: doc.id,
+                        initialMode: editorMode
+                    ) { edited in
+                        vm.exportImages = edited
+                        var updated = vm.translatedDocument ?? doc
+                        updated.wasEdited = true
+                        updated.pageCount = max(updated.pageCount, edited.count)
+                        vm.translatedDocument = updated
+                        vm.translationResult = updated
+                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true)
                     }
                 }
             }
@@ -301,6 +322,16 @@ struct TranslateView: View {
                 onSignStamp: {
                     AppAnalytics.tap("translate_sign_stamp")
                     showSignStampEditor = true
+                },
+                onEditDocument: {
+                    AppAnalytics.tap("translate_edit_document")
+                    editorMode = .edit
+                    showDocumentEditor = true
+                },
+                onHighlight: {
+                    AppAnalytics.tap("translate_highlight_document")
+                    editorMode = .markup
+                    showDocumentEditor = true
                 }
             )
             ExportFormatRow(isEnabled: !isExporting) {

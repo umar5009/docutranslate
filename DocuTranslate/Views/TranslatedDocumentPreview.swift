@@ -4,6 +4,8 @@ struct TranslatedDocumentPreview: View {
     let document: TranslatedDocument
     var scannedImages: [UIImage] = []
     var onSignStamp: (() -> Void)?
+    var onEditDocument: (() -> Void)?
+    var onHighlight: (() -> Void)?
 
     @State private var selectedTab: PreviewTab = .translated
     @State private var previewPage = 0
@@ -21,6 +23,9 @@ struct TranslatedDocumentPreview: View {
             documentPage
             if pageCount > 1 {
                 pageNavigator
+            }
+            if onEditDocument != nil || onHighlight != nil {
+                DocumentEditorLaunchRow(onEdit: onEditDocument, onHighlight: onHighlight)
             }
             if let onSignStamp {
                 Button(action: onSignStamp) {

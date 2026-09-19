@@ -4,7 +4,6 @@ struct HistoryView: View {
     @EnvironmentObject var appState: AppState
     @State private var searchText = ""
     @State private var selectedFilter: HistoryFilter = .all
-    @State private var viewingDocument: TranslatedDocument?
     @State private var shareItems: [Any] = []
     @State private var showShareSheet = false
     @State private var isPreparingShare = false
@@ -67,12 +66,6 @@ struct HistoryView: View {
                 }
             }
             .searchable(text: $searchText, prompt: "Search documents...")
-            .sheet(item: $viewingDocument) { doc in
-                HistoryDocumentViewer(
-                    document: doc,
-                    images: appState.images(for: doc)
-                )
-            }
             .sheet(isPresented: $showShareSheet) {
                 ActivityShareSheet(items: shareItems)
             }
@@ -160,7 +153,7 @@ struct HistoryView: View {
                                     document: doc,
                                     onView: {
                                         AppAnalytics.tap("history_open", ["file": doc.fileName])
-                                        viewingDocument = doc
+                                        appState.openDocument(doc)
                                     },
                                     onShare: {
                                         AppAnalytics.tap("history_share", ["file": doc.fileName])
@@ -295,6 +288,15 @@ struct HistoryRow: View {
                                 .background(Color.blue)
                                 .cornerRadius(6)
                         }
+                        if document.wasEdited == true {
+                            Text("Edited")
+                                .font(.caption2.weight(.medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color(hex: "#FF375F"))
+                                .cornerRadius(6)
+                        }
                     }
 
                     Text(document.formattedDate)
@@ -333,23 +335,30 @@ struct HistoryDocumentViewer: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var liveDocument: TranslatedDocument
+    @State private var liveImages: [UIImage]
     @State private var pageIndex = 0
     @State private var showShareSheet = false
     @State private var shareItems: [Any] = []
     @State private var isPreparingShare = false
     @State private var shareError: String?
     @State private var showText = false
+    @State private var showDocumentEditor = false
+    @State private var editorMode: DocumentEditorMode = .edit
+    @State private var showSignStampEditor = false
+    @State private var unsignedSnapshot: [UIImage] = []
+    @State private var showRemoveStampConfirm = false
 
     init(document: TranslatedDocument, images: [UIImage]) {
         self.document = document
         self.images = images
         _liveDocument = State(initialValue: document)
+        _liveImages = State(initialValue: images)
     }
 
     private var pages: [UIImage] {
-        let raw = images.isEmpty
+        let raw = liveImages.isEmpty
             ? ExportService.shared.imagesForSigning(liveDocument, existing: [])
-            : images
+            : liveImages
         return DocumentBranding.apply(raw, to: liveDocument)
     }
 
@@ -362,10 +371,10 @@ struct HistoryDocumentViewer: View {
         NavigationView {
             VStack(spacing: 0) {
                 if liveDocument.showsBrandingTag {
-                    RemoveBrandingBanner(document: $liveDocument) { updated in
-                        appState.addDocument(updated, images: images, signed: updated.wasSigned == true)
+                    RemoveBrandingBanner(document: $liveDocument, compact: true) { updated in
+                        appState.addDocument(updated, images: liveImages, signed: updated.wasSigned == true)
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 12)
                     .padding(.top, 8)
                 }
                 if showText, hasText {
@@ -375,9 +384,12 @@ struct HistoryDocumentViewer: View {
                 } else {
                     pagePreview
                 }
+                if !pages.isEmpty {
+                    documentActions
+                }
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle(document.fileName)
+            .navigationTitle(liveDocument.fileName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -409,6 +421,46 @@ struct HistoryDocumentViewer: View {
             .sheet(isPresented: $showShareSheet) {
                 ActivityShareSheet(items: shareItems)
             }
+            .fullScreenCover(isPresented: $showDocumentEditor) {
+                DocumentEditorView(
+                    pages: liveImages.isEmpty
+                        ? ExportService.shared.imagesForSigning(liveDocument, existing: [])
+                        : liveImages,
+                    pageIndex: pageIndex,
+                    fileName: liveDocument.fileName,
+                    documentID: liveDocument.id,
+                    initialMode: editorMode
+                ) { edited in
+                    applyEditedPages(edited)
+                }
+            }
+            .sheet(isPresented: $showSignStampEditor) {
+                SignStampEditorView(
+                    pages: liveImages.isEmpty
+                        ? ExportService.shared.imagesForSigning(liveDocument, existing: [])
+                        : liveImages,
+                    pageIndex: pageIndex,
+                    documentID: liveDocument.id,
+                    onBrandingRemoved: {
+                        liveDocument.brandingRemoved = true
+                    }
+                ) { signed in
+                    applySignedPages(signed)
+                }
+            }
+            .confirmationDialog(
+                "Remove signature and stamp?",
+                isPresented: $showRemoveStampConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Remove Sign / Stamp", role: .destructive) {
+                    AppAnalytics.tap("history_remove_sign_stamp")
+                    removeSignStamp()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This restores the document to how it looked before the last signature or stamp.")
+            }
             .overlay {
                 if isPreparingShare {
                     ExportingOverlay(message: "Preparing…")
@@ -422,7 +474,123 @@ struct HistoryDocumentViewer: View {
             } message: {
                 Text(shareError ?? "")
             }
+            .onAppear {
+                let stored = appState.storedDocument(for: liveDocument)
+                liveDocument = stored
+                let storedImages = appState.images(for: stored)
+                if !storedImages.isEmpty {
+                    liveImages = storedImages
+                }
+                if unsignedSnapshot.isEmpty {
+                    unsignedSnapshot = HistoryStore.shared.unsignedImages(for: stored)
+                }
+            }
         }
+    }
+
+    private func applyEditedPages(_ edited: [UIImage]) {
+        liveImages = edited
+        liveDocument.wasEdited = true
+        liveDocument.pageCount = max(liveDocument.pageCount, edited.count)
+        if let thumb = edited.first {
+            liveDocument.thumbnailData = thumb.jpegData(compressionQuality: 0.7)
+        }
+        if liveDocument.wasSigned != true {
+            unsignedSnapshot = edited
+        }
+        appState.addDocument(
+            liveDocument,
+            images: edited,
+            signed: liveDocument.wasSigned == true,
+            unsignedImages: liveDocument.wasSigned == true ? nil : edited
+        )
+    }
+
+    private func applySignedPages(_ signed: [UIImage]) {
+        let unsigned = unsignedSnapshot.isEmpty ? liveImages : unsignedSnapshot
+        if unsignedSnapshot.isEmpty {
+            unsignedSnapshot = liveImages
+        }
+        liveImages = signed
+        liveDocument.wasSigned = true
+        liveDocument.pageCount = max(liveDocument.pageCount, signed.count)
+        appState.addDocument(
+            liveDocument,
+            images: signed,
+            signed: true,
+            unsignedImages: unsigned
+        )
+    }
+
+    private var canRemoveSignStamp: Bool {
+        liveDocument.wasSigned == true
+            && (!unsignedSnapshot.isEmpty || !HistoryStore.shared.unsignedImages(for: liveDocument).isEmpty)
+    }
+
+    private func removeSignStamp() {
+        var restored = unsignedSnapshot
+        if restored.isEmpty {
+            restored = HistoryStore.shared.unsignedImages(for: liveDocument)
+        }
+        guard !restored.isEmpty else { return }
+        liveImages = restored
+        liveDocument.wasSigned = false
+        appState.addDocument(
+            liveDocument,
+            images: restored,
+            signed: false,
+            replaceSignedPages: true
+        )
+    }
+
+    private var documentActions: some View {
+        VStack(spacing: 8) {
+            DocumentEditorLaunchRow(
+                onEdit: {
+                    AppAnalytics.tap("history_edit_document")
+                    editorMode = .edit
+                    showDocumentEditor = true
+                },
+                onHighlight: {
+                    AppAnalytics.tap("history_highlight_document")
+                    editorMode = .markup
+                    showDocumentEditor = true
+                }
+            )
+            HStack(spacing: 12) {
+                Button {
+                    AppAnalytics.tap("history_sign_stamp")
+                    if unsignedSnapshot.isEmpty {
+                        let storedUnsigned = HistoryStore.shared.unsignedImages(for: liveDocument)
+                        unsignedSnapshot = storedUnsigned.isEmpty ? liveImages : storedUnsigned
+                    }
+                    showSignStampEditor = true
+                } label: {
+                    Label("Sign / Stamp", systemImage: "signature")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.blue.opacity(0.12))
+                        .cornerRadius(12)
+                }
+                if canRemoveSignStamp {
+                    Button {
+                        showRemoveStampConfirm = true
+                    } label: {
+                        Label("Remove Stamp", systemImage: "xmark.circle")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(12)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private func shareCurrentDocument() async {
@@ -431,7 +599,7 @@ struct HistoryDocumentViewer: View {
         do {
             let url = try await ExportService.shared.makeShareFile(
                 document: liveDocument,
-                images: images
+                images: liveImages
             )
             shareItems = [url]
             showShareSheet = true
@@ -446,24 +614,24 @@ struct HistoryDocumentViewer: View {
                 ForEach(pages.indices, id: \.self) { index in
                     ZoomablePageImage(image: pages[index])
                         .tag(index)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: pages.count > 1 ? .automatic : .never))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             HStack {
-                Text(document.formattedDate)
+                Text(liveDocument.formattedDate)
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
-                if pages.count > 1 {
-                    Text("Page \(pageIndex + 1) of \(pages.count)")
-                        .font(.caption.weight(.semibold))
-                }
+                Text(pages.count > 1 ? "Page \(pageIndex + 1) of \(pages.count)" : "Pinch to zoom")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 6)
         }
     }
 
@@ -511,24 +679,36 @@ struct HistoryDocumentViewer: View {
 struct ZoomablePageImage: View {
     let image: UIImage
     @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
 
     var body: some View {
         GeometryReader { geo in
-            ScrollView([.horizontal, .vertical], showsIndicators: false) {
+            let fit = fittedSize(image.size, in: geo.size)
+            ScrollView([.horizontal, .vertical], showsIndicators: scale > 1) {
                 Image(uiImage: image)
                     .resizable()
+                    .interpolation(.high)
                     .scaledToFit()
-                    .frame(width: geo.size.width)
-                    .scaleEffect(scale)
+                    .frame(width: fit.width * scale, height: fit.height * scale)
+                    .frame(minWidth: geo.size.width, minHeight: geo.size.height)
                     .gesture(
                         MagnificationGesture()
                             .onChanged { value in
-                                scale = min(max(value, 1), 5)
+                                scale = min(max(lastScale * value, 1), 6)
+                            }
+                            .onEnded { _ in
+                                lastScale = scale
                             }
                     )
                     .onTapGesture(count: 2) {
                         withAnimation(.easeInOut(duration: 0.2)) {
-                            scale = scale > 1 ? 1 : 2.2
+                            if scale > 1 {
+                                scale = 1
+                                lastScale = 1
+                            } else {
+                                scale = 2.2
+                                lastScale = 2.2
+                            }
                         }
                     }
             }
@@ -536,6 +716,18 @@ struct ZoomablePageImage: View {
         .background(Color(.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
+        .onAppear {
+            scale = 1
+            lastScale = 1
+        }
+    }
+
+    private func fittedSize(_ imageSize: CGSize, in bounds: CGSize) -> CGSize {
+        guard imageSize.width > 0, imageSize.height > 0, bounds.width > 0, bounds.height > 0 else {
+            return bounds
+        }
+        let ratio = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        return CGSize(width: imageSize.width * ratio, height: imageSize.height * ratio)
     }
 }
 

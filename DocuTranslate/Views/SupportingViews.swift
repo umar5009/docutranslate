@@ -306,6 +306,8 @@ struct ScanTranslateView: View {
     @State private var extracting = false
     @State private var showSignStampPrompt = false
     @State private var showSignStampEditor = false
+    @State private var showDocumentEditor = false
+    @State private var editorMode: DocumentEditorMode = .edit
     @State private var isExporting = false
 
     var body: some View {
@@ -324,6 +326,16 @@ struct ScanTranslateView: View {
                             onSignStamp: {
                                 AppAnalytics.tap("scan_translate_sign")
                                 showSignStampEditor = true
+                            },
+                            onEditDocument: {
+                                AppAnalytics.tap("scan_translate_edit")
+                                editorMode = .edit
+                                showDocumentEditor = true
+                            },
+                            onHighlight: {
+                                AppAnalytics.tap("scan_translate_highlight")
+                                editorMode = .markup
+                                showDocumentEditor = true
                             }
                         )
                         ExportFormatRow(isEnabled: !isExporting) {
@@ -427,6 +439,30 @@ struct ScanTranslateView: View {
                         tvm.translatedDocument = updated
                         tvm.translationResult = updated
                         appState.addDocument(updated, images: signed, signed: true)
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showDocumentEditor) {
+                if let doc = tvm.translatedDocument ?? tvm.translationResult {
+                    DocumentEditorView(
+                        pages: ExportService.shared.imagesForSigning(
+                            doc,
+                            existing: vm.session.pages.map(\.displayImage)
+                        ),
+                        pageIndex: 0,
+                        fileName: doc.fileName,
+                        documentID: doc.id,
+                        initialMode: editorMode
+                    ) { edited in
+                        for i in edited.indices where i < vm.session.pages.count {
+                            vm.session.pages[i].processedImage = edited[i]
+                        }
+                        var updated = tvm.translatedDocument ?? doc
+                        updated.wasEdited = true
+                        updated.pageCount = max(updated.pageCount, edited.count)
+                        tvm.translatedDocument = updated
+                        tvm.translationResult = updated
+                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true)
                     }
                 }
             }
