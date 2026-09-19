@@ -64,6 +64,32 @@ enum MarkupTool: String, CaseIterable, Identifiable {
     }
 }
 
+enum TextPlacement: String, CaseIterable, Identifiable {
+    case onLine, above, below, left, right
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .onLine: return "On line"
+        case .above: return "Above"
+        case .below: return "Below"
+        case .left: return "Left"
+        case .right: return "Right"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .onLine: return "text.alignleft"
+        case .above: return "arrow.up.to.line"
+        case .below: return "arrow.down.to.line"
+        case .left: return "arrow.left.to.line"
+        case .right: return "arrow.right.to.line"
+        }
+    }
+}
+
 enum EditorShapeKind: String, CaseIterable, Identifiable {
     case rectangle, ellipse, line, arrow
 

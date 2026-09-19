@@ -430,9 +430,7 @@ struct ScanTranslateView: View {
                             tvm.translatedDocument = updated
                         }
                     ) { signed in
-                        for i in signed.indices where i < vm.session.pages.count {
-                            vm.session.pages[i].processedImage = signed[i]
-                        }
+                        vm.applyRenderedPages(signed, signed: true)
                         var updated = tvm.translatedDocument ?? doc
                         updated.wasSigned = true
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
@@ -454,9 +452,7 @@ struct ScanTranslateView: View {
                         documentID: doc.id,
                         initialMode: editorMode
                     ) { edited in
-                        for i in edited.indices where i < vm.session.pages.count {
-                            vm.session.pages[i].processedImage = edited[i]
-                        }
+                        vm.applyRenderedPages(edited, edited: true)
                         var updated = tvm.translatedDocument ?? doc
                         updated.wasEdited = true
                         updated.pageCount = max(updated.pageCount, edited.count)

@@ -367,6 +367,7 @@ struct ScannedPage: Identifiable {
     var rotation: Double = 0
     var extractedText: String = ""
     var wasEnhanced: Bool = false
+    var renderRevision: Int = 0
 
     var displayImage: UIImage { processedImage ?? baseImage ?? originalImage }
 }

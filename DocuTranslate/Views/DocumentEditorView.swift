@@ -45,6 +45,11 @@ struct DocumentEditorView: View {
     @State private var zoomFocusToken = 0
     @State private var zoomFocusRect: CGRect?
     @State private var keyboardHeight: CGFloat = 0
+    @State private var resizeStart: CGRect?
+    @State private var resizeStartFont: CGFloat = 0
+    @State private var isPinchingBox = false
+    @State private var zoomRequest: CGFloat = 1
+    @State private var zoomRequestToken = 0
 
     init(
         pages: [UIImage],
@@ -200,7 +205,9 @@ struct DocumentEditorView: View {
                 onFront: bringToFront,
                 onBack: sendToBack,
                 onDelete: deleteSelected,
-                onPickFont: { showFontPicker = true }
+                onPickFont: { showFontPicker = true },
+                onPlace: placeSelected,
+                onCloseCallout: item.sourceID == nil ? nil : dismissLinkedCallout
             )
             .background(
                 Color(.systemBackground)
@@ -231,7 +238,7 @@ struct DocumentEditorView: View {
     private var zoomBottomInset: CGFloat {
         var inset = keyboardHeight
         if selected?.isText == true {
-            inset += inspectorExpanded ? 210 : 112
+            inset += inspectorExpanded ? 258 : 168
         } else if selected != nil {
             inset += 64
         }
@@ -371,29 +378,32 @@ struct DocumentEditorView: View {
 
     // MARK: - Canvas
 
+    private var isPlacingSelection: Bool {
+        guard let item = selected else { return false }
+        return item.isText || item.kind == .image || item.kind == .shape || item.kind == .link || item.kind == .redact
+    }
+
     private var canvasAllowsPan: Bool {
+        if usesDrawingDrag { return false }
+        if isPlacingSelection && zoomScale <= 1.05 { return false }
+        return true
+    }
+
+    private var canvasAllowsPinch: Bool {
         if mode == .markup {
-            return selected?.isText == true
+            switch markupTool {
+            case .pen, .marker, .eraser: return false
+            default: return true
+            }
         }
-        switch editTool {
-        case .select:
-            return selectedID == nil || selected?.isText == true
-        case .text, .image:
-            return true
-        case .shape, .link, .redact:
-            return false
-        }
+        return true
     }
 
     private var usesDrawingDrag: Bool {
-        if mode == .markup {
-            return selected?.isText != true
-        }
+        if mode == .markup { return true }
         switch editTool {
         case .shape, .link, .redact:
-            return true
-        case .select:
-            return selectedID != nil && selected?.isText != true
+            return selectedID == nil
         default:
             return false
         }
@@ -407,12 +417,15 @@ struct DocumentEditorView: View {
                 EditorZoomScrollView(
                     contentSize: fit,
                     panEnabled: canvasAllowsPan,
+                    pinchEnabled: canvasAllowsPinch,
                     zoomScale: $zoomScale,
                     resetToken: zoomResetToken,
                     focusToken: zoomFocusToken,
                     focusRect: zoomFocusRect,
                     bottomInset: zoomBottomInset,
-                    onTap: canvasAllowsPan ? { point in handleCanvasTap(at: point) } : nil
+                    zoomRequest: zoomRequest,
+                    zoomRequestToken: zoomRequestToken,
+                    onTap: usesDrawingDrag ? nil : { point in handleCanvasTap(at: point) }
                 ) {
                     pageCanvas(size: fit)
                         .onAppear { canvasSize = fit }
@@ -420,21 +433,43 @@ struct DocumentEditorView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if zoomScale > 1.05 {
+                HStack(spacing: 8) {
                     Button {
-                        zoomScale = 1
-                        zoomResetToken += 1
+                        requestZoom(zoomScale / 1.35)
                     } label: {
-                        Text(String(format: "%.1f×  ·  Reset", zoomScale))
+                        Image(systemName: "minus.magnifyingglass")
                             .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: Circle())
                     }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(10)
+                    .disabled(zoomScale <= 1.02)
+
+                    Button {
+                        requestZoom(min(zoomScale * 1.4, 6))
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.caption.weight(.semibold))
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .disabled(zoomScale >= 5.9)
+
+                    if zoomScale > 1.05 {
+                        Button {
+                            zoomScale = 1
+                            zoomResetToken += 1
+                        } label: {
+                            Text(String(format: "%.1f×  ·  Reset", zoomScale))
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(.ultraThinMaterial, in: Capsule())
+                        }
+                    }
                 }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(10)
             }
             .overlay(alignment: .bottom) {
                 if pages.count > 1 {
@@ -476,6 +511,11 @@ struct DocumentEditorView: View {
         guard imageSize.width > 1, imageSize.height > 1 else { return available }
         let ratio = min(available.width / imageSize.width, available.height / imageSize.height)
         return CGSize(width: imageSize.width * ratio, height: imageSize.height * ratio)
+    }
+
+    private func requestZoom(_ scale: CGFloat) {
+        zoomRequest = min(max(scale, 1), 6)
+        zoomRequestToken += 1
     }
 
     private func focusOnNormalizedRect(_ normalized: CGRect) {
@@ -522,6 +562,9 @@ struct DocumentEditorView: View {
                 formFieldHints
             }
             connectorArrows
+            if let item = selected, isPlacingSelection {
+                textBoxManipulator(item)
+            }
         }
     }
 
@@ -562,6 +605,7 @@ struct DocumentEditorView: View {
     }
 
     private func handleCanvasTap(at point: CGPoint) {
+        if dismissCallout(at: point) { return }
         if mode == .markup {
             if let id = hitTest(at: point),
                let element = elements.first(where: { $0.id == id }),
@@ -613,6 +657,14 @@ struct DocumentEditorView: View {
                             } else {
                                 textBlock(element, in: rect)
                             }
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            Image(systemName: "xmark.circle.fill")
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, Color(hex: "#DC2626"))
+                                .font(.system(size: max(14, min(22, rect.height * 0.55)), weight: .bold))
+                                .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
+                                .offset(x: 8, y: -8)
                         }
                 } else {
                     textBlock(element, in: rect)
@@ -776,7 +828,7 @@ struct DocumentEditorView: View {
             ForEach(Array(handlePoints(in: rect).enumerated()), id: \.offset) { _, point in
                 Rectangle()
                     .fill(Color.white)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 11, height: 11)
                     .overlay(Rectangle().strokeBorder(Color(hex: "#3B82F6"), lineWidth: 1.2))
                     .position(point)
             }
@@ -794,6 +846,182 @@ struct DocumentEditorView: View {
             CGPoint(x: 0, y: rect.height),
             CGPoint(x: 0, y: rect.height / 2)
         ]
+    }
+
+    private func textBoxManipulator(_ element: EditorElement) -> some View {
+        let pixel = element.rect.pixelRect(in: canvasSize)
+        let box = pixel.insetBy(dx: -16, dy: -16)
+        return ZStack {
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { value in
+                            moveSelected(translation: value.translation)
+                        }
+                        .onEnded { _ in
+                            movingStart = nil
+                        }
+                )
+            ForEach(Array(cornerHandles(in: CGRect(origin: .zero, size: box.size)).enumerated()), id: \.offset) { index, point in
+                Circle()
+                    .fill(Color.white)
+                    .overlay(Circle().strokeBorder(Color(hex: "#2563EB"), lineWidth: 1.6))
+                    .frame(width: 18, height: 18)
+                    .padding(6)
+                    .position(point)
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { value in
+                                resizeSelected(handle: index, translation: value.translation)
+                            }
+                            .onEnded { _ in
+                                resizeStart = nil
+                            }
+                    )
+            }
+            if element.sourceID != nil {
+                Button(action: dismissLinkedCallout) {
+                    Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color(hex: "#DC2626"))
+                        .font(.system(size: 22, weight: .bold))
+                        .shadow(color: .black.opacity(0.3), radius: 2, y: 1)
+                        .padding(6)
+                }
+                .buttonStyle(.plain)
+                .position(x: box.width - 8, y: 8)
+            }
+        }
+        .frame(width: box.width, height: box.height)
+        .position(x: pixel.midX, y: pixel.midY)
+    }
+
+    private func cornerHandles(in rect: CGRect) -> [CGPoint] {
+        [
+            CGPoint(x: 9, y: 9),
+            CGPoint(x: rect.width - 9, y: 9),
+            CGPoint(x: rect.width - 9, y: rect.height - 9),
+            CGPoint(x: 9, y: rect.height - 9)
+        ]
+    }
+
+    private func moveSelected(translation: CGSize) {
+        guard let idx = selectedIndex else { return }
+        if movingStart == nil {
+            movingStart = elements[idx].rect
+            pushUndo()
+        }
+        guard let start = movingStart else { return }
+        let dx = translation.width / max(canvasSize.width, 1)
+        let dy = translation.height / max(canvasSize.height, 1)
+        var rect = start
+        rect.origin.x = (start.minX + dx).clamped(to: 0...(1 - start.width))
+        rect.origin.y = (start.minY + dy).clamped(to: 0...(1 - start.height))
+        elements[idx].rect = rect
+    }
+
+    private func pinchSelected(_ scale: CGFloat) {
+        guard let idx = selectedIndex else { return }
+        if resizeStart == nil {
+            resizeStart = elements[idx].rect
+            resizeStartFont = elements[idx].fontSize
+            pushUndo()
+        }
+        guard let start = resizeStart else { return }
+        let s = min(max(scale, 0.45), 3.6)
+        let width = max(0.04, start.width * s)
+        let height = max(0.012, start.height * s)
+        var rect = start
+        rect.origin.x = start.midX - width / 2
+        rect.origin.y = start.midY - height / 2
+        rect.size.width = width
+        rect.size.height = height
+        applyResizedRect(rect, from: start, font: resizeStartFont, index: idx)
+    }
+
+    private func resizeSelected(handle: Int, translation: CGSize) {
+        guard let idx = selectedIndex else { return }
+        if resizeStart == nil {
+            resizeStart = elements[idx].rect
+            resizeStartFont = elements[idx].fontSize
+            pushUndo()
+        }
+        guard let start = resizeStart else { return }
+        let dx = translation.width / max(canvasSize.width, 1)
+        let dy = translation.height / max(canvasSize.height, 1)
+        var rect = start
+        switch handle {
+        case 0:
+            rect.origin.x += dx
+            rect.origin.y += dy
+            rect.size.width -= dx
+            rect.size.height -= dy
+        case 1:
+            rect.origin.y += dy
+            rect.size.width += dx
+            rect.size.height -= dy
+        case 2:
+            rect.size.width += dx
+            rect.size.height += dy
+        default:
+            rect.origin.x += dx
+            rect.size.width -= dx
+            rect.size.height += dy
+        }
+        guard rect.width > 0.04, rect.height > 0.012 else { return }
+        applyResizedRect(rect, from: start, font: resizeStartFont, index: idx)
+    }
+
+    private func applyResizedRect(_ rect: CGRect, from start: CGRect, font: CGFloat, index: Int) {
+        elements[index].rect = rect.clampedNormalized()
+        guard elements[index].isText, start.height > 0.0008 else { return }
+        let scale = elements[index].rect.height / start.height
+        elements[index].fontSize = min(max(font * scale, 0.007), 0.14)
+    }
+
+    private func placeSelected(_ placement: TextPlacement) {
+        guard let idx = selectedIndex else { return }
+        let item = elements[idx]
+        let source: CGRect = {
+            if let sourceID = item.sourceID, let original = elements.first(where: { $0.id == sourceID }) {
+                return original.rect
+            }
+            if let field = pageFormFields.first(where: { $0.rect.intersects(item.rect.insetBy(dx: -0.03, dy: -0.02)) }) {
+                return field.rect
+            }
+            if let pending = pendingField, pending.pageIndex == currentPage {
+                return pending.rect
+            }
+            return item.rect
+        }()
+        pushUndo()
+        var rect = item.rect
+        let width = rect.width
+        let height = rect.height
+        switch placement {
+        case .onLine:
+            rect.size.height = max(height, source.height * 0.92)
+            rect.size.width = max(width, min(max(source.width * 0.55, 0.16), 0.42))
+            rect.origin.x = source.minX
+            rect.origin.y = source.midY - rect.height / 2
+        case .above:
+            rect.origin.x = source.minX
+            rect.origin.y = max(0.008, source.minY - height - 0.01)
+        case .below:
+            rect.origin.x = source.minX
+            rect.origin.y = min(0.98 - height, source.maxY + 0.01)
+        case .left:
+            rect.origin.x = max(0.01, source.minX - width - 0.012)
+            rect.origin.y = source.midY - height / 2
+        case .right:
+            rect.origin.x = min(0.98 - width, source.maxX + 0.012)
+            rect.origin.y = source.midY - height / 2
+        }
+        elements[idx].rect = rect.clampedNormalized()
+        if elements[idx].isText {
+            elements[idx].fontSize = min(max(elements[idx].rect.height * 0.72, 0.008), 0.12)
+        }
     }
 
     // MARK: - Gestures
@@ -912,8 +1140,9 @@ struct DocumentEditorView: View {
         )
     }
 
-    private func hitTest(at point: CGPoint) -> UUID? {
+    private func hitTest(at point: CGPoint, skippingMarkup: Bool = false) -> UUID? {
         for element in pageElements.reversed() {
+            if skippingMarkup && element.isMarkup { continue }
             if element.kind == .ink {
                 if inkHits(element, at: point) { return element.id }
                 continue
@@ -992,6 +1221,7 @@ struct DocumentEditorView: View {
     }
 
     private func handleSelectTap(at point: CGPoint) {
+        if dismissCallout(at: point) { return }
         if let id = hitTest(at: point), let element = elements.first(where: { $0.id == id }) {
             let isPrintedLabel = element.kind == .existingText
                 && DocumentEditorService.shared.isFieldLabel(element.text)
@@ -1334,7 +1564,7 @@ struct DocumentEditorView: View {
     }
 
     private func highlightTappedText(at point: CGPoint) {
-        guard let id = hitTest(at: point),
+        guard let id = hitTest(at: point, skippingMarkup: true),
               let element = elements.first(where: { $0.id == id }) else { return }
         if element.kind == .addedText {
             selectedID = element.id
@@ -1531,6 +1761,32 @@ struct DocumentEditorView: View {
         elements[idx].zIndex = minZ
     }
 
+    private func dismissLinkedCallout() {
+        dismissLinkedCallout(id: selectedID)
+    }
+
+    private func dismissCallout(at point: CGPoint) -> Bool {
+        guard let callout = pageElements.first(where: { element in
+            element.kind == .addedText && element.sourceID != nil && closeHitRect(for: element).contains(point)
+        }) else { return false }
+        dismissLinkedCallout(id: callout.id)
+        return true
+    }
+
+    private func closeHitRect(for element: EditorElement) -> CGRect {
+        let pixel = element.rect.pixelRect(in: canvasSize)
+        return CGRect(x: pixel.maxX - 6, y: pixel.minY - 22, width: 32, height: 32)
+    }
+
+    private func dismissLinkedCallout(id: UUID?) {
+        guard let id,
+              let idx = elements.firstIndex(where: { $0.id == id && $0.kind == .addedText && $0.sourceID != nil })
+        else { return }
+        pushUndo()
+        elements.remove(at: idx)
+        if selectedID == id { selectedID = nil }
+    }
+
     private func deleteSelected() {
         guard let id = selectedID, let idx = selectedIndex else { return }
         pushUndo()
@@ -1690,32 +1946,41 @@ struct DocumentEditorView: View {
 private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
     var contentSize: CGSize
     var panEnabled: Bool
+    var pinchEnabled: Bool
     @Binding var zoomScale: CGFloat
     var resetToken: Int
     var focusToken: Int
     var focusRect: CGRect?
     var bottomInset: CGFloat
+    var zoomRequest: CGFloat
+    var zoomRequestToken: Int
     var onTap: ((CGPoint) -> Void)?
     var content: Content
 
     init(
         contentSize: CGSize,
         panEnabled: Bool,
+        pinchEnabled: Bool,
         zoomScale: Binding<CGFloat>,
         resetToken: Int,
         focusToken: Int,
         focusRect: CGRect?,
         bottomInset: CGFloat,
+        zoomRequest: CGFloat,
+        zoomRequestToken: Int,
         onTap: ((CGPoint) -> Void)?,
         @ViewBuilder content: () -> Content
     ) {
         self.contentSize = contentSize
         self.panEnabled = panEnabled
+        self.pinchEnabled = pinchEnabled
         self._zoomScale = zoomScale
         self.resetToken = resetToken
         self.focusToken = focusToken
         self.focusRect = focusRect
         self.bottomInset = bottomInset
+        self.zoomRequest = zoomRequest
+        self.zoomRequestToken = zoomRequestToken
         self.onTap = onTap
         self.content = content()
     }
@@ -1768,6 +2033,7 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         singleTap.require(toFail: doubleTap)
         scroll.addGestureRecognizer(singleTap)
         context.coordinator.singleTap = singleTap
+        context.coordinator.doubleTap = doubleTap
 
         return scroll
     }
@@ -1778,7 +2044,9 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         context.coordinator.widthConstraint?.constant = max(contentSize.width, 1)
         context.coordinator.heightConstraint?.constant = max(contentSize.height, 1)
         scroll.panGestureRecognizer.isEnabled = panEnabled
+        scroll.pinchGestureRecognizer?.isEnabled = pinchEnabled
         context.coordinator.singleTap?.isEnabled = onTap != nil
+        context.coordinator.doubleTap?.isEnabled = pinchEnabled
         if context.coordinator.lastResetToken != resetToken {
             context.coordinator.lastResetToken = resetToken
             context.coordinator.lastFocusToken = focusToken
@@ -1792,6 +2060,9 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
             DispatchQueue.main.async {
                 context.coordinator.zoomTo(rect, in: scroll, bottomInset: inset, animated: true)
             }
+        } else if context.coordinator.lastZoomRequestToken != zoomRequestToken {
+            context.coordinator.lastZoomRequestToken = zoomRequestToken
+            scroll.setZoomScale(min(max(zoomRequest, scroll.minimumZoomScale), scroll.maximumZoomScale), animated: true)
         } else {
             context.coordinator.centerContent(in: scroll)
         }
@@ -1803,8 +2074,10 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
         var singleTap: UITapGestureRecognizer?
+        var doubleTap: UITapGestureRecognizer?
         var lastResetToken = -1
         var lastFocusToken = -1
+        var lastZoomRequestToken = 0
 
         init(_ parent: EditorZoomScrollView) {
             self.parent = parent
@@ -1891,6 +2164,8 @@ private struct EditTextPanel: View {
     let onBack: () -> Void
     let onDelete: () -> Void
     let onPickFont: () -> Void
+    var onPlace: ((TextPlacement) -> Void)?
+    var onCloseCallout: (() -> Void)?
     @FocusState private var isFocused: Bool
 
     private var pointSize: Double {
@@ -1903,10 +2178,19 @@ private struct EditTextPanel: View {
                 withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
             } label: {
                 HStack {
-                    Text("Edit Text")
+                    Text(element.sourceID == nil ? "Edit Text" : "Edited Text")
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(.primary)
                     Spacer()
+                    if let onCloseCallout {
+                        Button(action: onCloseCallout) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.title3)
+                                .symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, Color(hex: "#DC2626"))
+                        }
+                        .accessibilityLabel("Close text box")
+                    }
                     Image(systemName: expanded ? "chevron.down" : "chevron.up")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
@@ -1914,8 +2198,18 @@ private struct EditTextPanel: View {
             }
             .buttonStyle(.plain)
 
+            if !element.originalText.isEmpty, element.sourceID != nil {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "arrow.uturn.backward.circle")
+                    Text("Original: \(element.originalText)")
+                        .lineLimit(2)
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+
             HStack {
-                TextField("Type here", text: Binding(
+                TextField(element.sourceID == nil ? "Type here" : "Type edited text", text: Binding(
                     get: { element.text },
                     set: { value in onChange { $0.text = value; $0.isModified = true } }
                 ))
@@ -1931,6 +2225,31 @@ private struct EditTextPanel: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 10))
+
+            if let onPlace {
+                HStack(spacing: 6) {
+                    ForEach(TextPlacement.allCases) { placement in
+                        Button {
+                            onPlace(placement)
+                        } label: {
+                            VStack(spacing: 2) {
+                                Image(systemName: placement.icon)
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text(placement.title)
+                                    .font(.system(size: 9, weight: .medium))
+                            }
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Text("Drag the box to move · Pinch to resize text")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
 
             if expanded {
                 HStack(spacing: 10) {
@@ -2009,14 +2328,10 @@ private struct EditTextPanel: View {
         .padding(.bottom, 10)
         .background(Color(.systemBackground))
         .onAppear {
-            if element.text.isEmpty {
-                isFocused = true
-            }
+            isFocused = true
         }
         .onChange(of: element.id) { _, _ in
-            if element.text.isEmpty {
-                isFocused = true
-            }
+            isFocused = true
         }
     }
 
