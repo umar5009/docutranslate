@@ -211,8 +211,7 @@ struct DocumentEditorView: View {
                     AppAnalytics.tap("editor_pick_font")
                     showFontPicker = true
                 },
-                onPlace: placeSelected,
-                onCloseCallout: item.sourceID == nil ? nil : dismissLinkedCallout
+                onPlace: placeSelected
             )
             .background(
                 Color(.systemBackground)
@@ -670,12 +669,14 @@ struct DocumentEditorView: View {
                             }
                         }
                         .overlay(alignment: .topTrailing) {
-                            Image(systemName: "xmark.circle.fill")
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(.white, Color(hex: "#DC2626"))
-                                .font(.system(size: max(14, min(22, rect.height * 0.55)), weight: .bold))
-                                .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
-                                .offset(x: 8, y: -8)
+                            if !isSelected {
+                                Image(systemName: "xmark.circle.fill")
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, Color(hex: "#DC2626"))
+                                    .font(.system(size: max(14, min(22, rect.height * 0.55)), weight: .bold))
+                                    .shadow(color: .black.opacity(0.25), radius: 1, y: 1)
+                                    .offset(x: 8, y: -8)
+                            }
                         }
                 } else {
                     textBlock(element, in: rect)
@@ -2190,7 +2191,6 @@ private struct EditTextPanel: View {
     let onDelete: () -> Void
     let onPickFont: () -> Void
     var onPlace: ((TextPlacement) -> Void)?
-    var onCloseCallout: (() -> Void)?
     @FocusState private var isFocused: Bool
 
     private var pointSize: Double {
@@ -2208,15 +2208,6 @@ private struct EditTextPanel: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(.primary)
                     Spacer()
-                    if let onCloseCallout {
-                        Button(action: onCloseCallout) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.title3)
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(.white, Color(hex: "#DC2626"))
-                        }
-                        .accessibilityLabel("Close text box")
-                    }
                     Image(systemName: expanded ? "chevron.down" : "chevron.up")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
