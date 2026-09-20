@@ -40,14 +40,10 @@ final class BrandingStore: ObservableObject {
     }
 
     func logPurchaseButtonClick(source: String) {
-        AppAnalytics.tap("branding_buy", [
-            "product": Self.productID,
-            "price": priceText,
-            "source": source
-        ])
+        logPay("branding_buy", source: source)
     }
 
-    func purchaseRemoval(for documentID: UUID) async throws {
+    func purchaseRemoval(for documentID: UUID, source: String = "unknown") async throws {
         isLoading = true
         defer { isLoading = false }
 
@@ -55,22 +51,42 @@ final class BrandingStore: ObservableObject {
             await loadProduct()
         }
         guard let product else {
+            logPay("pay_product_unavailable", source: source)
             throw BrandingPurchaseError.productUnavailable
         }
 
+        logPay("pay_purchase_started", source: source)
         let result = try await product.purchase()
         switch result {
         case .success(let verification):
-            let transaction = try checkVerified(verification)
+            let transaction = try checkVerified(verification, source: source)
             markRemoved(documentID)
             await transaction.finish()
-            AppAnalytics.log("branding_removed", ["product": Self.productID])
+            logPay("branding_removed", source: source)
+            logPay("pay_purchase_success", source: source)
         case .userCancelled:
+            logPay("pay_purchase_discarded", source: source)
             throw BrandingPurchaseError.cancelled
         case .pending:
+            logPay("pay_purchase_pending", source: source)
             throw BrandingPurchaseError.pending
         @unknown default:
+            logPay("pay_purchase_failed", source: source, extra: ["reason": "unknown"])
             throw BrandingPurchaseError.failed
+        }
+    }
+
+    private func logPay(_ name: String, source: String, extra: [String: Any] = [:]) {
+        var params: [String: Any] = [
+            "product": Self.productID,
+            "price": priceText,
+            "source": source
+        ]
+        extra.forEach { params[$0.key] = $0.value }
+        if name == "branding_buy" {
+            AppAnalytics.tap(name, params)
+        } else {
+            AppAnalytics.log(name, params)
         }
     }
 
@@ -81,9 +97,10 @@ final class BrandingStore: ObservableObject {
         objectWillChange.send()
     }
 
-    private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
+    private func checkVerified<T>(_ result: VerificationResult<T>, source: String = "unknown") throws -> T {
         switch result {
         case .unverified:
+            logPay("pay_purchase_failed", source: source, extra: ["reason": "unverified"])
             throw BrandingPurchaseError.failed
         case .verified(let value):
             return value
@@ -156,7 +173,7 @@ struct RemoveTagPaymentSheet: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 20) {
                 Image(systemName: "tag.slash.fill")
                     .font(.system(size: 40))
@@ -211,11 +228,18 @@ struct RemoveTagPaymentSheet: View {
             }
         }
         .presentationDetents([.medium])
+        .onAppear {
+            AppAnalytics.log("pay_sheet_shown", [
+                "product": BrandingStore.productID,
+                "price": store.priceText,
+                "source": "sheet"
+            ])
+        }
     }
 
     private func buy() async {
         do {
-            try await store.purchaseRemoval(for: documentID)
+            try await store.purchaseRemoval(for: documentID, source: "sheet")
             onPurchased()
             dismiss()
         } catch BrandingPurchaseError.cancelled {
@@ -258,6 +282,7 @@ struct RemoveBrandingBanner: View {
             }
             .font(.caption.weight(.semibold))
             Button {
+                AppAnalytics.tap("branding_info_expand")
                 withAnimation { expanded = true }
             } label: {
                 Image(systemName: "info.circle")
@@ -283,6 +308,7 @@ struct RemoveBrandingBanner: View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
                 Button {
+                    AppAnalytics.tap("branding_info_collapse")
                     withAnimation { expanded = false }
                 } label: {
                     HStack {
@@ -338,7 +364,7 @@ struct RemoveBrandingBanner: View {
 
     private func buy() async {
         do {
-            try await store.purchaseRemoval(for: document.id)
+            try await store.purchaseRemoval(for: document.id, source: "banner")
             document.brandingRemoved = true
             onRemoved?(document)
         } catch BrandingPurchaseError.cancelled {

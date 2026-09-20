@@ -66,7 +66,7 @@ struct SignStampEditorView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             GeometryReader { geo in
                 VStack(spacing: 0) {
                     documentPreview

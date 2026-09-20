@@ -11,7 +11,7 @@ struct TranslateView: View {
     @State private var isExporting = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     // Language selector
@@ -31,6 +31,8 @@ struct TranslateView: View {
                     }
                 }
                 .padding()
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("Translate")
             .navigationBarTitleDisplayMode(.large)

@@ -11,7 +11,7 @@ struct ConvertView: View {
     @State private var isExporting = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     header
@@ -28,6 +28,8 @@ struct ConvertView: View {
                     }
                 }
                 .padding()
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("Convert")
             .navigationBarTitleDisplayMode(.large)

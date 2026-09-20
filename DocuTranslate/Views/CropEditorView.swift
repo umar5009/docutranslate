@@ -18,7 +18,7 @@ struct CropEditorView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             GeometryReader { geo in
                 ZStack {
                     // Dark background
@@ -273,7 +273,7 @@ struct StampCropView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
 

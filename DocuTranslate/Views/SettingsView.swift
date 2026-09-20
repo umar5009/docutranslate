@@ -4,7 +4,6 @@ import UIKit
 struct SettingsView: View {
     @AppStorage("defaultSourceLanguage") private var defaultSourceCode = "en"
     @AppStorage("defaultTargetLanguage") private var defaultTargetCode = "pl"
-    @AppStorage("scanQuality") private var scanQuality = "High"
     @AppStorage("autoDetectLanguage") private var autoDetect = true
     @AppStorage("saveHistory") private var saveHistory = true
     @AppStorage("hapticFeedback") private var hapticFeedback = true
@@ -38,7 +37,7 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 // Default languages
                 Section {
@@ -86,49 +85,6 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("Translation")
-                }
-
-                // Scan settings
-                Section {
-                    Picker(selection: $scanQuality) {
-                        Text("Standard").tag("Standard")
-                        Text("High").tag("High")
-                        Text("Ultra").tag("Ultra")
-                    } label: {
-                        Label {
-                            Text("Scan Quality")
-                        } icon: {
-                            Image(systemName: "camera.viewfinder")
-                                .foregroundColor(.purple)
-                        }
-                    }
-                } header: {
-                    Text("Scanning")
-                }
-                .onChange(of: scanQuality) { _, value in
-                    AppAnalytics.tap("settings_scan_quality", ["quality": value])
-                }
-
-                Section {
-                    SavedSignaturesSettingsSection()
-                } header: {
-                    Text("Sign & Stamp")
-                } footer: {
-                    Text("Saved signatures and stamps can be reused from the Scan tab.")
-                }
-
-                Section {
-                    SavedStampsSettingsSection()
-                } header: {
-                    Text("Saved Stamps")
-                }
-
-                Section {
-                    ExportLocationSection()
-                } header: {
-                    Text("Saved Documents")
-                } footer: {
-                    Text("Documents stay in History. Use Share from a document to send a PDF or save a copy to Files.")
                 }
 
                 // App settings
@@ -193,25 +149,6 @@ struct SettingsView: View {
                     Text("Notifications")
                 } footer: {
                     Text("DocuTranslate can send document reminders and updates through Firebase Cloud Messaging.")
-                }
-
-                // Supported formats info
-                Section {
-                    ForEach(DocumentType.allCases, id: \.self) { type in
-                        HStack(spacing: 12) {
-                            Image(systemName: type.icon)
-                                .foregroundColor(Color(hex: type.color))
-                                .frame(width: 24)
-                            Text(type.rawValue)
-                                .font(.subheadline)
-                            Spacer()
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                                .font(.system(size: 14))
-                        }
-                    }
-                } header: {
-                    Text("Supported Document Types")
                 }
 
                 // About
@@ -317,7 +254,7 @@ struct AboutView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 28) {
                     // App icon area
@@ -431,112 +368,5 @@ struct TechRow: View {
         .padding(.horizontal, 12)
         .background(Color(.systemGray6))
         .cornerRadius(8)
-    }
-}
-
-struct ExportLocationSection: View {
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("History")
-                    .font(.subheadline.weight(.medium))
-                Text("Saved scans, translations, and signed pages appear in the History tab. Share from there when you want a file.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        } icon: {
-            Image(systemName: "clock.arrow.circlepath")
-                .foregroundColor(.orange)
-        }
-    }
-}
-
-struct SavedSignaturesSettingsSection: View {
-    @State private var savedSignatures: [SavedSignature] = []
-
-    var body: some View {
-        Group {
-            if savedSignatures.isEmpty {
-                Text("No saved signatures yet")
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(savedSignatures) { saved in
-                    HStack(spacing: 12) {
-                        if let image = saved.image {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 80, height: 36)
-                                .padding(6)
-                                .background(Color(.systemGray6))
-                                .cornerRadius(8)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(saved.name)
-                                .font(.subheadline.weight(.medium))
-                            Text(saved.createdAt.formatted(date: .abbreviated, time: .omitted))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Button(role: .destructive) {
-                            AppAnalytics.tap("settings_delete_signature")
-                            SignStampService.shared.deleteSavedSignature(id: saved.id)
-                            savedSignatures = SignStampService.shared.loadSavedSignatures()
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                    }
-                }
-            }
-        }
-        .onAppear {
-            savedSignatures = SignStampService.shared.loadSavedSignatures()
-        }
-    }
-}
-
-struct SavedStampsSettingsSection: View {
-    @State private var savedStamps: [SavedStamp] = []
-
-    var body: some View {
-        Group {
-            if savedStamps.isEmpty {
-                Text("No saved stamps yet")
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(savedStamps) { saved in
-                    HStack(spacing: 12) {
-                        if let image = saved.image {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 56, height: 56)
-                                .padding(6)
-                                .background(Color(.systemGray6))
-                                .cornerRadius(8)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(saved.name)
-                                .font(.subheadline.weight(.medium))
-                            Text(saved.createdAt.formatted(date: .abbreviated, time: .omitted))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        Button(role: .destructive) {
-                            AppAnalytics.tap("settings_delete_stamp")
-                            SignStampService.shared.deleteSavedStamp(id: saved.id)
-                            savedStamps = SignStampService.shared.loadSavedStamps()
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                    }
-                }
-            }
-        }
-        .onAppear {
-            savedStamps = SignStampService.shared.loadSavedStamps()
-        }
     }
 }

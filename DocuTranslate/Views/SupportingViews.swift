@@ -76,7 +76,7 @@ struct ExportView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 24) {
                 documentCard
                 RemoveBrandingBanner(document: $liveDocument) { updated in
@@ -219,7 +219,10 @@ struct SavedExportAlert: View {
             Color.black.opacity(0.55)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
-                .onTapGesture(perform: onOK)
+                .onTapGesture {
+                    AppAnalytics.tap("export_saved_ok")
+                    onOK()
+                }
 
             VStack(spacing: 18) {
                 Image(systemName: "checkmark.circle.fill")
@@ -236,7 +239,10 @@ struct SavedExportAlert: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
-                Button(action: onOK) {
+                Button(action: {
+                    AppAnalytics.tap("export_saved_ok")
+                    onOK()
+                }) {
                     Text("OK")
                         .font(.headline)
                         .foregroundColor(.primary)
@@ -311,7 +317,7 @@ struct ScanTranslateView: View {
     @State private var isExporting = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     langSelector

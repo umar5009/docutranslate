@@ -2,10 +2,11 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDocumentPicker = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
                     // Hero banner
@@ -25,6 +26,8 @@ struct HomeView: View {
                     }
                     .padding()
                 }
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("DocuTranslate")
             .navigationBarTitleDisplayMode(.large)
@@ -40,6 +43,14 @@ struct HomeView: View {
                 }
             }
         }
+    }
+
+    private var contentMaxWidth: CGFloat {
+        horizontalSizeClass == .regular ? 920 : .infinity
+    }
+
+    private var actionColumnCount: Int {
+        horizontalSizeClass == .regular ? 3 : 2
     }
 
     // MARK: - Hero Banner
@@ -89,7 +100,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "Quick Actions")
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: actionColumnCount), spacing: 12) {
                 QuickActionCard(
                     icon: "doc.badge.plus",
                     title: "Upload Document",

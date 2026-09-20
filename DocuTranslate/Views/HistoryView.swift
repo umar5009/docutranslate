@@ -45,7 +45,7 @@ struct HistoryView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if appState.recentDocuments.isEmpty {
                     emptyState
@@ -78,7 +78,7 @@ struct HistoryView: View {
                 get: { shareError != nil },
                 set: { if !$0 { shareError = nil } }
             )) {
-                Button("OK", role: .cancel) { shareError = nil }
+                Button("OK", role: .cancel, action: AppAnalytics.action("history_share_error_ok") { shareError = nil })
             } message: {
                 Text(shareError ?? "")
             }
@@ -368,7 +368,7 @@ struct HistoryDocumentViewer: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 if liveDocument.showsBrandingTag {
                     RemoveBrandingBanner(document: $liveDocument, compact: true) { updated in
@@ -457,7 +457,7 @@ struct HistoryDocumentViewer: View {
                     AppAnalytics.tap("history_remove_sign_stamp")
                     removeSignStamp()
                 }
-                Button("Cancel", role: .cancel) {}
+                Button("Cancel", role: .cancel, action: AppAnalytics.action("history_remove_cancel") {})
             } message: {
                 Text("This restores the document to how it looked before the last signature or stamp.")
             }
@@ -470,7 +470,7 @@ struct HistoryDocumentViewer: View {
                 get: { shareError != nil },
                 set: { if !$0 { shareError = nil } }
             )) {
-                Button("OK", role: .cancel) { shareError = nil }
+                Button("OK", role: .cancel, action: AppAnalytics.action("history_share_error_ok") { shareError = nil })
             } message: {
                 Text(shareError ?? "")
             }
@@ -576,6 +576,7 @@ struct HistoryDocumentViewer: View {
                 }
                 if canRemoveSignStamp {
                     Button {
+                        AppAnalytics.tap("history_remove_open")
                         showRemoveStampConfirm = true
                     } label: {
                         Label("Remove Stamp", systemImage: "xmark.circle")

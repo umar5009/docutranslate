@@ -33,7 +33,7 @@ struct StampImportView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if sourceImage == nil {
@@ -377,7 +377,7 @@ struct FullScreenStampDrawView: View {
     private let service = SignStampService.shared
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 12) {
                 Text("Type a stamp such as CANCELLED, or write it by hand")
                     .font(.subheadline)

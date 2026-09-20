@@ -103,6 +103,9 @@ struct TranslatedDocumentPreview: View {
             }
         }
         .pickerStyle(.segmented)
+        .onChange(of: selectedTab) { _, tab in
+            AppAnalytics.tap("preview_tab", ["tab": tab.rawValue])
+        }
     }
 
     private var documentPage: some View {
@@ -177,6 +180,7 @@ struct TranslatedDocumentPreview: View {
     private var pageNavigator: some View {
         HStack(spacing: 16) {
             Button {
+                AppAnalytics.tap("preview_prev_page")
                 previewPage = max(previewPage - 1, 0)
             } label: {
                 Image(systemName: "chevron.left.circle.fill")
@@ -188,6 +192,7 @@ struct TranslatedDocumentPreview: View {
                 .font(.subheadline.weight(.semibold))
 
             Button {
+                AppAnalytics.tap("preview_next_page")
                 previewPage = min(previewPage + 1, pageCount - 1)
             } label: {
                 Image(systemName: "chevron.right.circle.fill")

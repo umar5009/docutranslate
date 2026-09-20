@@ -8,7 +8,7 @@ struct ScanView: View {
     @State private var showFullPreview = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if vm.session.pages.isEmpty {
                     emptyState
@@ -148,6 +148,7 @@ struct ScanView: View {
                 }
             }
             .padding(.horizontal)
+            .frame(maxWidth: 560)
 
             Spacer()
         }
@@ -655,7 +656,7 @@ private struct ScanFullPreview: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 0) {
                 TabView(selection: $pageIndex) {
                     ForEach(pages.indices, id: \.self) { index in
@@ -677,7 +678,7 @@ private struct ScanFullPreview: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done", action: AppAnalytics.action("scan_preview_done") { dismiss() })
                 }
             }
         }

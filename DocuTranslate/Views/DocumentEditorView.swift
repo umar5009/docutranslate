@@ -116,17 +116,19 @@ struct DocumentEditorView: View {
         .confirmationDialog("Shape", isPresented: $showShapePicker, titleVisibility: .visible) {
             ForEach(EditorShapeKind.allCases) { kind in
                 Button(kind.title) {
+                    AppAnalytics.tap("editor_shape", ["shape": kind.rawValue])
                     shapeKind = kind
                     editTool = .shape
                 }
             }
+            Button("Cancel", role: .cancel, action: AppAnalytics.action("editor_shape_cancel") {})
         }
         .alert("Add Link", isPresented: $showLinkAlert) {
             TextField("https://", text: $linkURL)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
-            Button("Add") { commitLink() }
-            Button("Cancel", role: .cancel) { pendingLinkRect = nil }
+            Button("Add", action: AppAnalytics.action("editor_link_add") { commitLink() })
+            Button("Cancel", role: .cancel, action: AppAnalytics.action("editor_link_cancel") { pendingLinkRect = nil })
         } message: {
             Text("Enter a web address for this link box.")
         }
@@ -145,8 +147,8 @@ struct DocumentEditorView: View {
             }
         }
         .alert("Discard Changes?", isPresented: $showDiscardAlert) {
-            Button("Discard", role: .destructive) { dismiss() }
-            Button("Keep Editing", role: .cancel) {}
+            Button("Discard", role: .destructive, action: AppAnalytics.action("editor_discard") { dismiss() })
+            Button("Keep Editing", role: .cancel, action: AppAnalytics.action("editor_keep_editing") {})
         } message: {
             Text("Your edits on this document will be lost.")
         }
@@ -205,7 +207,10 @@ struct DocumentEditorView: View {
                 onFront: bringToFront,
                 onBack: sendToBack,
                 onDelete: deleteSelected,
-                onPickFont: { showFontPicker = true },
+                onPickFont: {
+                    AppAnalytics.tap("editor_pick_font")
+                    showFontPicker = true
+                },
                 onPlace: placeSelected,
                 onCloseCallout: item.sourceID == nil ? nil : dismissLinkedCallout
             )
@@ -264,6 +269,7 @@ struct DocumentEditorView: View {
             .pickerStyle(.segmented)
 
             Button {
+                AppAnalytics.tap("editor_undo")
                 undo()
             } label: {
                 Image(systemName: "arrow.uturn.backward")
@@ -273,6 +279,7 @@ struct DocumentEditorView: View {
 
             if mode == .edit {
                 Button {
+                    AppAnalytics.tap("editor_redo")
                     redo()
                 } label: {
                     Image(systemName: "arrow.uturn.forward")
@@ -292,6 +299,7 @@ struct DocumentEditorView: View {
         .padding(.vertical, 8)
         .background(Color(.systemBackground))
         .onChange(of: mode) { _, newMode in
+            AppAnalytics.tap("editor_mode", ["mode": newMode.rawValue])
             selectedID = nil
             if newMode == .edit {
                 editTool = .select
@@ -435,6 +443,7 @@ struct DocumentEditorView: View {
 
                 HStack(spacing: 8) {
                     Button {
+                        AppAnalytics.tap("editor_zoom_out")
                         requestZoom(zoomScale / 1.35)
                     } label: {
                         Image(systemName: "minus.magnifyingglass")
@@ -445,6 +454,7 @@ struct DocumentEditorView: View {
                     .disabled(zoomScale <= 1.02)
 
                     Button {
+                        AppAnalytics.tap("editor_zoom_in")
                         requestZoom(min(zoomScale * 1.4, 6))
                     } label: {
                         Image(systemName: "plus.magnifyingglass")
@@ -456,6 +466,7 @@ struct DocumentEditorView: View {
 
                     if zoomScale > 1.05 {
                         Button {
+                            AppAnalytics.tap("editor_zoom_reset")
                             zoomScale = 1
                             zoomResetToken += 1
                         } label: {
@@ -981,6 +992,7 @@ struct DocumentEditorView: View {
     }
 
     private func placeSelected(_ placement: TextPlacement) {
+        AppAnalytics.tap("editor_text_place", ["place": placement.rawValue])
         guard let idx = selectedIndex else { return }
         let item = elements[idx]
         let source: CGRect = {
@@ -1411,7 +1423,7 @@ struct DocumentEditorView: View {
     }
 
     private var datePickerSheet: some View {
-        NavigationView {
+        NavigationStack {
             VStack {
                 DatePicker(
                     pendingField?.label ?? "Date",
@@ -1427,13 +1439,17 @@ struct DocumentEditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
+                        AppAnalytics.tap("editor_date_cancel")
                         showDatePicker = false
                         pendingField = nil
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Insert") { insertDate() }
-                        .fontWeight(.semibold)
+                    Button("Insert") {
+                        AppAnalytics.tap("editor_date_insert")
+                        insertDate()
+                    }
+                    .fontWeight(.semibold)
                 }
             }
         }
@@ -1679,6 +1695,7 @@ struct DocumentEditorView: View {
 
     private func addPickedImage(_ item: PhotosPickerItem?) async {
         guard let item else { return }
+        AppAnalytics.tap("editor_add_image")
         guard let data = try? await item.loadTransferable(type: Data.self),
               let image = UIImage(data: data),
               let jpeg = image.jpegData(compressionQuality: 0.86) else { return }
@@ -1714,6 +1731,7 @@ struct DocumentEditorView: View {
 
     private func copySelected() {
         guard var item = selected else { return }
+        AppAnalytics.tap("editor_copy")
         pushUndo()
         item = EditorElement(
             id: UUID(),
@@ -1749,6 +1767,7 @@ struct DocumentEditorView: View {
 
     private func bringToFront() {
         guard let idx = selectedIndex else { return }
+        AppAnalytics.tap("editor_front")
         pushUndo()
         elements[idx].zIndex = nextZ
         nextZ += 1
@@ -1756,6 +1775,7 @@ struct DocumentEditorView: View {
 
     private func sendToBack() {
         guard let idx = selectedIndex else { return }
+        AppAnalytics.tap("editor_back")
         pushUndo()
         let minZ = (elements.map(\.zIndex).min() ?? 0) - 1
         elements[idx].zIndex = minZ
@@ -1782,6 +1802,7 @@ struct DocumentEditorView: View {
         guard let id,
               let idx = elements.firstIndex(where: { $0.id == id && $0.kind == .addedText && $0.sourceID != nil })
         else { return }
+        AppAnalytics.tap("editor_close_callout")
         pushUndo()
         elements.remove(at: idx)
         if selectedID == id { selectedID = nil }
@@ -1789,6 +1810,7 @@ struct DocumentEditorView: View {
 
     private func deleteSelected() {
         guard let id = selectedID, let idx = selectedIndex else { return }
+        AppAnalytics.tap("editor_delete")
         pushUndo()
         if elements[idx].kind == .existingText, !elements[idx].isModified {
             elements[idx].isModified = true
@@ -1861,6 +1883,7 @@ struct DocumentEditorView: View {
     private var pageBar: some View {
         HStack {
             Button {
+                AppAnalytics.tap("editor_prev_page")
                 currentPage = max(currentPage - 1, 0)
             } label: {
                 Image(systemName: "chevron.left.circle.fill").font(.title3)
@@ -1869,6 +1892,7 @@ struct DocumentEditorView: View {
             Text("Page \(currentPage + 1) of \(pages.count)")
                 .font(.subheadline.weight(.semibold))
             Button {
+                AppAnalytics.tap("editor_next_page")
                 currentPage = min(currentPage + 1, pages.count - 1)
             } label: {
                 Image(systemName: "chevron.right.circle.fill").font(.title3)
@@ -1917,9 +1941,10 @@ struct DocumentEditorView: View {
     }
 
     private var fontPicker: some View {
-        NavigationView {
+        NavigationStack {
             List(DocumentEditorPalette.fonts, id: \.self) { font in
                 Button {
+                    AppAnalytics.tap("editor_font_select", ["font": font])
                     updateSelected { $0.fontName = font }
                     showFontPicker = false
                 } label: {
@@ -1935,7 +1960,7 @@ struct DocumentEditorView: View {
             .navigationTitle("Font")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { showFontPicker = false }
+                    Button("Done", action: AppAnalytics.action("editor_font_done") { showFontPicker = false })
                 }
             }
         }
@@ -2175,6 +2200,7 @@ private struct EditTextPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
+                AppAnalytics.tap(expanded ? "editor_text_collapse" : "editor_text_expand")
                 withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() }
             } label: {
                 HStack {
@@ -2217,6 +2243,7 @@ private struct EditTextPanel: View {
                 .font(.body)
                 .focused($isFocused)
                 Button {
+                    AppAnalytics.tap("editor_text_clear")
                     onChange { $0.text = "" }
                 } label: {
                     Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
@@ -2274,9 +2301,18 @@ private struct EditTextPanel: View {
                 }
 
                 HStack(spacing: 6) {
-                    styleButton("bold", selected: element.isBold) { onChange { $0.isBold.toggle() } }
-                    styleButton("italic", selected: element.isItalic) { onChange { $0.isItalic.toggle() } }
-                    styleButton("underline", selected: element.isUnderline) { onChange { $0.isUnderline.toggle() } }
+                    styleButton("bold", selected: element.isBold) {
+                        AppAnalytics.tap("editor_text_style", ["style": "bold"])
+                        onChange { $0.isBold.toggle() }
+                    }
+                    styleButton("italic", selected: element.isItalic) {
+                        AppAnalytics.tap("editor_text_style", ["style": "italic"])
+                        onChange { $0.isItalic.toggle() }
+                    }
+                    styleButton("underline", selected: element.isUnderline) {
+                        AppAnalytics.tap("editor_text_style", ["style": "underline"])
+                        onChange { $0.isUnderline.toggle() }
+                    }
                     alignButton("text.alignleft", 0)
                     alignButton("text.aligncenter", 1)
                     alignButton("text.alignright", 2)
@@ -2294,7 +2330,10 @@ private struct EditTextPanel: View {
                             .overlay(
                                 Circle().strokeBorder(element.colorHex == hex ? DocumentEditorPalette.accent : Color.clear, lineWidth: 2)
                             )
-                            .onTapGesture { onChange { $0.colorHex = hex } }
+                            .onTapGesture {
+                                AppAnalytics.tap("editor_text_color", ["color": hex])
+                                onChange { $0.colorHex = hex }
+                            }
                     }
                 }
 
@@ -2348,6 +2387,7 @@ private struct EditTextPanel: View {
 
     private func alignButton(_ icon: String, _ value: Int) -> some View {
         Button {
+            AppAnalytics.tap("editor_text_align", ["align": value])
             onChange { $0.alignment = value }
         } label: {
             Image(systemName: icon)
