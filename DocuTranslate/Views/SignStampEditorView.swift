@@ -4,8 +4,6 @@ import PencilKit
 struct SignStampEditorView: View {
     @State private var pages: [UIImage]
     @State private var currentPage: Int
-    let documentID: UUID
-    let onBrandingRemoved: (() -> Void)?
     let onComplete: ([UIImage]) -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -40,24 +38,17 @@ struct SignStampEditorView: View {
     @State private var showStampDraw = false
     @State private var showStampChat = false
     @State private var selectedOverlay: OverlayKind?
-    @State private var showBrandingTag: Bool
-    @State private var showRemovePayment = false
 
     private let service = SignStampService.shared
 
     init(
         pages: [UIImage],
         pageIndex: Int = 0,
-        documentID: UUID,
-        onBrandingRemoved: (() -> Void)? = nil,
         onComplete: @escaping ([UIImage]) -> Void
     ) {
         _pages = State(initialValue: pages)
         _currentPage = State(initialValue: min(max(pageIndex, 0), max(pages.count - 1, 0)))
-        self.documentID = documentID
-        self.onBrandingRemoved = onBrandingRemoved
         self.onComplete = onComplete
-        _showBrandingTag = State(initialValue: !BrandingStore.hasRemovedTag(for: documentID))
     }
 
     private var pageImage: UIImage {
@@ -142,12 +133,6 @@ struct SignStampEditorView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showRemovePayment) {
-                RemoveTagPaymentSheet(documentID: documentID) {
-                    showBrandingTag = false
-                    onBrandingRemoved?()
-                }
-            }
         }
     }
 
@@ -162,6 +147,7 @@ struct SignStampEditorView: View {
                     .resizable()
                     .scaledToFit()
                     .id(currentPage)
+                    .documentMagnifier(image: pageImage)
                     .background(
                         GeometryReader { imgGeo in
                             Color.clear.onAppear { previewSize = imgGeo.size }
@@ -172,13 +158,6 @@ struct SignStampEditorView: View {
                         if previewSize != .zero {
                             overlayLayer(in: previewSize)
                                 .coordinateSpace(name: "stampCanvas")
-                        }
-                    }
-                    .overlay(alignment: .bottomTrailing) {
-                        if showBrandingTag, previewSize != .zero {
-                            brandingTagChip(fontSize: DocumentBranding.fontSize(for: previewSize))
-                                .padding(.trailing, max(8, previewSize.width * 0.03))
-                                .padding(.bottom, max(6, previewSize.height * 0.02))
                         }
                     }
                     .overlay(alignment: .topTrailing) {
@@ -342,32 +321,6 @@ struct SignStampEditorView: View {
                 }
             }
         }
-    }
-
-    private func brandingTagChip(fontSize: CGFloat) -> some View {
-        HStack(spacing: 4) {
-            Text(DocumentBranding.tag)
-                .font(.system(size: fontSize, weight: .medium))
-                .foregroundColor(.white)
-                .lineLimit(1)
-            Button {
-                AppAnalytics.tap("sign_remove_tag")
-                showRemovePayment = true
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, Color.red)
-                    .font(.system(size: max(18, fontSize + 6)))
-                    .shadow(color: .black.opacity(0.35), radius: 1, y: 1)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Remove Scanned by DocuTranslate tag")
-        }
-        .padding(.leading, 8)
-        .padding(.trailing, 4)
-        .padding(.vertical, 5)
-        .background(Color.black.opacity(0.45))
-        .cornerRadius(4)
     }
 
     private func overlayDeleteButton(

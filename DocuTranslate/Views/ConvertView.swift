@@ -9,6 +9,7 @@ struct ConvertView: View {
     @State private var showDocumentEditor = false
     @State private var editorMode: DocumentEditorMode = .edit
     @State private var isExporting = false
+    @State private var showPaywall = false
 
     var body: some View {
         NavigationStack {
@@ -49,20 +50,14 @@ struct ConvertView: View {
                 if let doc = vm.processedDocument {
                     SignStampEditorView(
                         pages: ExportService.shared.imagesForSigning(doc, existing: vm.pages, preferExisting: true),
-                        pageIndex: 0,
-                        documentID: doc.id,
-                        onBrandingRemoved: {
-                            var updated = doc
-                            updated.brandingRemoved = true
-                            vm.processedDocument = updated
-                        }
+                        pageIndex: 0
                     ) { signed in
                         vm.pages = signed
                         var updated = vm.processedDocument ?? doc
                         updated.wasSigned = true
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         vm.processedDocument = updated
-                        appState.addDocument(updated, images: signed, signed: true)
+                        appState.addDocument(updated, images: signed, signed: true, confirmProtection: true)
                     }
                 }
             }
@@ -72,7 +67,6 @@ struct ConvertView: View {
                         pages: ExportService.shared.imagesForSigning(doc, existing: vm.pages, preferExisting: true),
                         pageIndex: 0,
                         fileName: doc.fileName,
-                        documentID: doc.id,
                         initialMode: editorMode
                     ) { edited in
                         vm.pages = edited
@@ -80,7 +74,7 @@ struct ConvertView: View {
                         updated.wasEdited = true
                         updated.pageCount = max(updated.pageCount, edited.count)
                         vm.processedDocument = updated
-                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true)
+                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true, confirmProtection: true)
                     }
                 }
             }
@@ -101,6 +95,16 @@ struct ConvertView: View {
             .onChange(of: vm.photoItems) { _, items in
                 guard !items.isEmpty else { return }
                 Task { await vm.loadPhotos() }
+            }
+            .sheet(isPresented: $showPaywall) {
+                if let doc = vm.processedDocument {
+                    RemoveTagPaymentSheet(documentID: doc.id) {
+                        var updated = doc
+                        updated.brandingRemoved = true
+                        vm.processedDocument = updated
+                        appState.addDocument(updated, images: vm.pages, signed: updated.wasSigned == true)
+                    }
+                }
             }
             .overlay {
                 if vm.isProcessing {
@@ -267,11 +271,23 @@ struct ConvertView: View {
                     .foregroundColor(.blue)
             }
 
-            if let preview = DocumentBranding.apply(vm.pages, to: doc).first {
+            if let preview = vm.pages.first {
                 Image(uiImage: preview)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxHeight: 220)
+                    .frame(maxWidth: .infinity, maxHeight: 220)
+                    .aspectRatio(preview.size, contentMode: .fit)
+                    .documentMagnifier(image: preview)
+                    .overlay {
+                        GeometryReader { geo in
+                            if doc.showsBrandingTag {
+                                PaywallWatermarkBadge(canvasSize: geo.size) {
+                                    AppAnalytics.tap("watermark_paywall", ["source": "convert"])
+                                    showPaywall = true
+                                }
+                            }
+                        }
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 

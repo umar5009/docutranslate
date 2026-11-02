@@ -35,6 +35,7 @@ final class HistoryStore: ObservableObject {
             return
         }
         documents = items
+        BrandingStore.seedCompletedDocumentsIfNeeded(items)
     }
 
     func add(
@@ -54,14 +55,51 @@ final class HistoryStore: ObservableObject {
         stored.wasConverted = document.wasConverted == true || existing?.wasConverted == true
         stored.wasEdited = document.wasEdited == true || existing?.wasEdited == true
         stored.brandingRemoved = document.brandingRemoved == true || existing?.brandingRemoved == true || BrandingStore.hasRemovedTag(for: stored.id)
+        if document.requiresFaceID == true {
+            stored.requiresFaceID = true
+        } else if document.requiresFaceID == false {
+            stored.requiresFaceID = false
+        } else {
+            stored.requiresFaceID = existing?.requiresFaceID
+        }
+        stored.confidentialFileName = document.confidentialFileName ?? existing?.confidentialFileName
         stored.unsignedPageImageFileNames = document.unsignedPageImageFileNames ?? existing?.unsignedPageImageFileNames
         if stored.wasSigned == true, !signed, !replaceSignedPages, let existingName = existing?.fileName {
             stored.fileName = existingName
         }
-        if let unsignedImages, !unsignedImages.isEmpty, stored.unsignedPageImageFileNames == nil {
+        if let unsignedImages, !unsignedImages.isEmpty, stored.unsignedPageImageFileNames == nil, stored.requiresFaceID != true {
             stored.unsignedPageImageFileNames = persist(unsignedImages, for: document.id, suffix: "unsigned")
         }
-        if !images.isEmpty {
+        var sealedThisSave = false
+        if stored.requiresFaceID == true, !images.isEmpty, ConfidentialStore.canSeal(stored.id) {
+            do {
+                if let existing { deletePageFiles(for: existing, keepUnsigned: true) }
+                let name = try ConfidentialStore.writeSealed(
+                    id: stored.id,
+                    images: images,
+                    originalText: stored.originalText,
+                    translatedText: stored.translatedText
+                )
+                stored.confidentialFileName = name
+                stored.pageImageFileNames = nil
+                stored.thumbnailData = nil
+                stored.originalText = ""
+                stored.translatedText = ""
+                stored.pageCount = max(stored.pageCount, images.count)
+                sealedThisSave = true
+            } catch {
+                stored.requiresFaceID = false
+                stored.confidentialFileName = nil
+            }
+        }
+        if stored.requiresFaceID != true {
+            ConfidentialStore.removeProtection(id: stored.id)
+            if let sealed = stored.confidentialFileName {
+                try? FileManager.default.removeItem(at: ConfidentialStore.sealedDirectory().appendingPathComponent(sealed))
+            }
+            stored.confidentialFileName = nil
+        }
+        if !images.isEmpty, stored.requiresFaceID != true {
             let wouldWipeSignedPages = existing?.wasSigned == true
                 && !signed
                 && document.wasSigned != true
@@ -76,12 +114,29 @@ final class HistoryStore: ObservableObject {
                 stored.thumbnailData = thumbnailData(from: images[0])
                 stored.pageCount = max(stored.pageCount, images.count)
             }
-        } else if let existing {
-            stored.pageImageFileNames = existing.pageImageFileNames
-            stored.thumbnailData = stored.thumbnailData ?? existing.thumbnailData
+        } else if let existing, !sealedThisSave {
+            if stored.requiresFaceID == true, existing.confidentialFileName != nil {
+                stored.pageImageFileNames = nil
+                stored.thumbnailData = nil
+                stored.originalText = ""
+                stored.translatedText = ""
+                stored.confidentialFileName = existing.confidentialFileName
+            } else {
+                if stored.requiresFaceID == true {
+                    stored.requiresFaceID = false
+                }
+                stored.pageImageFileNames = existing.pageImageFileNames
+                stored.thumbnailData = stored.thumbnailData ?? existing.thumbnailData
+                stored.confidentialFileName = existing.confidentialFileName
+                if stored.originalText.isEmpty { stored.originalText = existing.originalText }
+                if stored.translatedText.isEmpty { stored.translatedText = existing.translatedText }
+            }
         }
         documents.removeAll { $0.id == stored.id }
         documents.insert(stored, at: 0)
+        if stored.wasEdited == true || stored.wasSigned == true {
+            BrandingStore.recordCompletedDocument(stored.id)
+        }
         if documents.count > 50 {
             let extra = documents.suffix(from: 50)
             extra.forEach { deletePageFiles(for: $0, keepUnsigned: false) }
@@ -91,8 +146,20 @@ final class HistoryStore: ObservableObject {
     }
 
     func images(for document: TranslatedDocument) -> [UIImage] {
-        loadImages(named: (documents.first(where: { $0.id == document.id }) ?? document).pageImageFileNames
-            ?? document.pageImageFileNames)
+        let stored = documents.first(where: { $0.id == document.id }) ?? document
+        if stored.requiresFaceID == true {
+            return []
+        }
+        return loadImages(named: stored.pageImageFileNames ?? document.pageImageFileNames)
+    }
+
+    func unlockConfidential(_ document: TranslatedDocument) async throws -> OpenedConfidentialDocument {
+        let stored = documents.first(where: { $0.id == document.id }) ?? document
+        guard let name = stored.confidentialFileName else {
+            throw ConfidentialError.missingKey
+        }
+        let url = pagesDirectory.appendingPathComponent(name)
+        return try await ConfidentialStore.open(id: stored.id, fileURL: url)
     }
 
     func unsignedImages(for document: TranslatedDocument) -> [UIImage] {
@@ -103,6 +170,10 @@ final class HistoryStore: ObservableObject {
     func delete(id: UUID) {
         if let match = documents.first(where: { $0.id == id }) {
             deletePageFiles(for: match, keepUnsigned: false)
+            if let sealed = match.confidentialFileName {
+                try? FileManager.default.removeItem(at: pagesDirectory.appendingPathComponent(sealed))
+            }
+            ConfidentialStore.removeProtection(id: id)
         }
         documents.removeAll { $0.id == id }
         persistMetadata()

@@ -8,6 +8,7 @@ struct HistoryView: View {
     @State private var showShareSheet = false
     @State private var isPreparingShare = false
     @State private var shareError: String?
+    @State private var pendingShare: PendingProtectedShare?
 
     enum HistoryFilter: String, CaseIterable {
         case all = "All"
@@ -69,6 +70,11 @@ struct HistoryView: View {
             .sheet(isPresented: $showShareSheet) {
                 ActivityShareSheet(items: shareItems)
             }
+            .sheet(item: $pendingShare) { share in
+                ShareKeyCodeSheet(code: share.code, fileName: share.document.fileName) {
+                    Task { await finishProtectedShare(share) }
+                }
+            }
             .overlay {
                 if isPreparingShare {
                     ExportingOverlay(message: "Preparing…")
@@ -89,9 +95,29 @@ struct HistoryView: View {
         isPreparingShare = true
         defer { isPreparingShare = false }
         do {
-            let url = try await ExportService.shared.makeShareFile(
+            var images = appState.images(for: document)
+            if document.requiresFaceID == true, images.isEmpty {
+                images = try await HistoryStore.shared.unlockConfidential(document).pages
+            }
+            pendingShare = PendingProtectedShare(
                 document: document,
-                images: appState.images(for: document)
+                images: images,
+                code: ShareKeyCode.make()
+            )
+        } catch {
+            shareError = error.localizedDescription
+        }
+    }
+
+    private func finishProtectedShare(_ share: PendingProtectedShare) async {
+        pendingShare = nil
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+        do {
+            let url = try await ExportService.shared.makeShareFile(
+                document: share.document,
+                images: share.images,
+                password: share.code
             )
             shareItems = [url]
             showShareSheet = true
@@ -243,7 +269,11 @@ struct HistoryRow: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(Color(hex: document.documentType.color).opacity(0.12))
                         .frame(width: 52, height: 64)
-                    if let thumb = document.thumbnail {
+                    if document.requiresFaceID == true {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 22))
+                            .foregroundColor(Color(hex: document.documentType.color))
+                    } else if let thumb = document.thumbnail {
                         Image(uiImage: thumb)
                             .resizable()
                             .scaledToFill()
@@ -347,6 +377,10 @@ struct HistoryDocumentViewer: View {
     @State private var showSignStampEditor = false
     @State private var unsignedSnapshot: [UIImage] = []
     @State private var showRemoveStampConfirm = false
+    @State private var showPaywall = false
+    @State private var pendingShare: PendingProtectedShare?
+    @State private var unlocking = false
+    @State private var didRequestUnlock = false
 
     init(document: TranslatedDocument, images: [UIImage]) {
         self.document = document
@@ -355,11 +389,15 @@ struct HistoryDocumentViewer: View {
         _liveImages = State(initialValue: images)
     }
 
+    private var isFaceIDLocked: Bool {
+        liveDocument.requiresFaceID == true && liveImages.isEmpty
+    }
+
     private var pages: [UIImage] {
-        let raw = liveImages.isEmpty
+        if isFaceIDLocked { return [] }
+        return liveImages.isEmpty
             ? ExportService.shared.imagesForSigning(liveDocument, existing: [])
             : liveImages
-        return DocumentBranding.apply(raw, to: liveDocument)
     }
 
     private var hasText: Bool {
@@ -377,7 +415,9 @@ struct HistoryDocumentViewer: View {
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
                 }
-                if showText, hasText {
+                if isFaceIDLocked {
+                    faceIDLock
+                } else if showText, hasText {
                     textPreview
                 } else if pages.isEmpty {
                     emptyPreview
@@ -421,6 +461,17 @@ struct HistoryDocumentViewer: View {
             .sheet(isPresented: $showShareSheet) {
                 ActivityShareSheet(items: shareItems)
             }
+            .sheet(item: $pendingShare) { share in
+                ShareKeyCodeSheet(code: share.code, fileName: share.document.fileName) {
+                    Task { await finishProtectedShare(share) }
+                }
+            }
+            .sheet(isPresented: $showPaywall) {
+                RemoveTagPaymentSheet(documentID: liveDocument.id) {
+                    liveDocument.brandingRemoved = true
+                    appState.addDocument(liveDocument, images: liveImages, signed: liveDocument.wasSigned == true)
+                }
+            }
             .fullScreenCover(isPresented: $showDocumentEditor) {
                 DocumentEditorView(
                     pages: liveImages.isEmpty
@@ -428,7 +479,6 @@ struct HistoryDocumentViewer: View {
                         : liveImages,
                     pageIndex: pageIndex,
                     fileName: liveDocument.fileName,
-                    documentID: liveDocument.id,
                     initialMode: editorMode
                 ) { edited in
                     applyEditedPages(edited)
@@ -439,11 +489,7 @@ struct HistoryDocumentViewer: View {
                     pages: liveImages.isEmpty
                         ? ExportService.shared.imagesForSigning(liveDocument, existing: [])
                         : liveImages,
-                    pageIndex: pageIndex,
-                    documentID: liveDocument.id,
-                    onBrandingRemoved: {
-                        liveDocument.brandingRemoved = true
-                    }
+                    pageIndex: pageIndex
                 ) { signed in
                     applySignedPages(signed)
                 }
@@ -477,9 +523,16 @@ struct HistoryDocumentViewer: View {
             .onAppear {
                 let stored = appState.storedDocument(for: liveDocument)
                 liveDocument = stored
-                let storedImages = appState.images(for: stored)
-                if !storedImages.isEmpty {
-                    liveImages = storedImages
+                if stored.requiresFaceID == true {
+                    if liveImages.isEmpty, !didRequestUnlock {
+                        didRequestUnlock = true
+                        Task { await unlockFaceID() }
+                    }
+                } else {
+                    let storedImages = appState.images(for: stored)
+                    if !storedImages.isEmpty {
+                        liveImages = storedImages
+                    }
                 }
                 if unsignedSnapshot.isEmpty {
                     unsignedSnapshot = HistoryStore.shared.unsignedImages(for: stored)
@@ -502,7 +555,8 @@ struct HistoryDocumentViewer: View {
             liveDocument,
             images: edited,
             signed: liveDocument.wasSigned == true,
-            unsignedImages: liveDocument.wasSigned == true ? nil : edited
+            unsignedImages: liveDocument.wasSigned == true ? nil : edited,
+            confirmProtection: true
         )
     }
 
@@ -518,7 +572,8 @@ struct HistoryDocumentViewer: View {
             liveDocument,
             images: signed,
             signed: true,
-            unsignedImages: unsigned
+            unsignedImages: unsigned,
+            confirmProtection: true
         )
     }
 
@@ -594,13 +649,77 @@ struct HistoryDocumentViewer: View {
         .padding(.vertical, 8)
     }
 
+    private var faceIDLock: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "faceid")
+                .font(.system(size: 48, weight: .light))
+                .foregroundColor(.blue)
+            Text("This document is locked")
+                .font(.headline)
+            Text("Face ID is required to open it.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            Button {
+                Task { await unlockFaceID() }
+            } label: {
+                Label(unlocking ? "Waiting for Face ID…" : "Unlock with Face ID", systemImage: "lock.open")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color.blue)
+                    .cornerRadius(12)
+            }
+            .disabled(unlocking)
+            Spacer()
+        }
+    }
+
+    private func unlockFaceID() async {
+        unlocking = true
+        defer { unlocking = false }
+        do {
+            let opened = try await HistoryStore.shared.unlockConfidential(liveDocument)
+            liveImages = opened.pages
+            liveDocument.originalText = opened.originalText
+            liveDocument.translatedText = opened.translatedText
+        } catch {
+            shareError = error.localizedDescription
+        }
+    }
+
     private func shareCurrentDocument() async {
         isPreparingShare = true
         defer { isPreparingShare = false }
         do {
-            let url = try await ExportService.shared.makeShareFile(
+            var images = liveImages
+            if liveDocument.requiresFaceID == true, images.isEmpty {
+                let opened = try await HistoryStore.shared.unlockConfidential(liveDocument)
+                images = opened.pages
+                liveImages = opened.pages
+                liveDocument.originalText = opened.originalText
+                liveDocument.translatedText = opened.translatedText
+            }
+            pendingShare = PendingProtectedShare(
                 document: liveDocument,
-                images: liveImages
+                images: images,
+                code: ShareKeyCode.make()
+            )
+        } catch {
+            shareError = error.localizedDescription
+        }
+    }
+
+    private func finishProtectedShare(_ share: PendingProtectedShare) async {
+        pendingShare = nil
+        isPreparingShare = true
+        defer { isPreparingShare = false }
+        do {
+            let url = try await ExportService.shared.makeShareFile(
+                document: share.document,
+                images: share.images,
+                password: share.code
             )
             shareItems = [url]
             showShareSheet = true
@@ -613,7 +732,14 @@ struct HistoryDocumentViewer: View {
         VStack(spacing: 0) {
             TabView(selection: $pageIndex) {
                 ForEach(pages.indices, id: \.self) { index in
-                    ZoomablePageImage(image: pages[index])
+                    ZoomablePageImage(
+                        image: pages[index],
+                        showsPaywallWatermark: liveDocument.showsBrandingTag,
+                        onPaywall: {
+                            AppAnalytics.tap("watermark_paywall", ["source": "history"])
+                            showPaywall = true
+                        }
+                    )
                         .tag(index)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
@@ -627,7 +753,7 @@ struct HistoryDocumentViewer: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
-                Text(pages.count > 1 ? "Page \(pageIndex + 1) of \(pages.count)" : "Pinch to zoom")
+                Text(pages.count > 1 ? "Page \(pageIndex + 1) of \(pages.count)" : "Hold to magnify · Pinch to zoom")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
             }
@@ -679,6 +805,8 @@ struct HistoryDocumentViewer: View {
 
 struct ZoomablePageImage: View {
     let image: UIImage
+    var showsPaywallWatermark = false
+    var onPaywall: (() -> Void)? = nil
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
 
@@ -691,6 +819,15 @@ struct ZoomablePageImage: View {
                     .interpolation(.high)
                     .scaledToFit()
                     .frame(width: fit.width * scale, height: fit.height * scale)
+                    .documentMagnifier(image: image)
+                    .overlay {
+                        if showsPaywallWatermark {
+                            PaywallWatermarkBadge(
+                                canvasSize: CGSize(width: fit.width * scale, height: fit.height * scale),
+                                onClose: { onPaywall?() }
+                            )
+                        }
+                    }
                     .frame(minWidth: geo.size.width, minHeight: geo.size.height)
                     .gesture(
                         MagnificationGesture()

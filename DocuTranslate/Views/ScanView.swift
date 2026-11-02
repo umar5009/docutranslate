@@ -57,8 +57,7 @@ struct ScanView: View {
                 if let idx = vm.currentPageIndex {
                     SignStampEditorView(
                         pages: vm.session.pages.map(\.displayImage),
-                        pageIndex: idx,
-                        documentID: vm.session.id
+                        pageIndex: idx
                     ) { signed in
                         vm.applyRenderedPages(signed, signed: true)
                     }
@@ -70,7 +69,6 @@ struct ScanView: View {
                         pages: vm.session.pages.map(\.displayImage),
                         pageIndex: idx,
                         fileName: "Scanned_Document",
-                        documentID: vm.session.id,
                         initialMode: vm.documentEditorMode
                     ) { edited in
                         vm.applyRenderedPages(edited, edited: true)
@@ -507,8 +505,13 @@ struct ScanView: View {
                 Button {
                     AppAnalytics.tap("scan_save_history")
                     Task {
-                        if let doc = await vm.exportToHistory() {
-                            appState.revealSavedDocument(doc)
+                        if let prepared = await vm.exportToHistory() {
+                            appState.addDocument(
+                                prepared.0,
+                                images: prepared.1,
+                                confirmProtection: true,
+                                revealAfter: true
+                            )
                         }
                     }
                 } label: {
@@ -668,7 +671,7 @@ private struct ScanFullPreview: View {
                 .tabViewStyle(.page(indexDisplayMode: pages.count > 1 ? .automatic : .never))
                 .background(Color.black)
 
-                Text(pages.count > 1 ? "Page \(pageIndex + 1) of \(pages.count)  ·  Pinch to zoom" : "Pinch to zoom · Double-tap to zoom")
+                Text(pages.count > 1 ? "Page \(pageIndex + 1) of \(pages.count)  ·  Hold to magnify" : "Hold to magnify · Pinch to zoom")
                     .font(.caption.weight(.semibold))
                     .foregroundColor(.secondary)
                     .padding(.vertical, 10)

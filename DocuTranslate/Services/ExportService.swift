@@ -75,17 +75,67 @@ class ExportService {
     }
 
     /// Writes a PDF (with stamps/signatures when present) for the iOS share sheet.
-    func makeShareFile(document: TranslatedDocument, images: [UIImage]) async throws -> URL {
+    func makeShareFile(document: TranslatedDocument, images: [UIImage], password: String? = nil) async throws -> URL {
         var pages = images
         if pages.isEmpty {
             pages = imagesForSigning(document, existing: [], preferExisting: document.wasSigned == true)
         }
         pages = DocumentBranding.apply(pages, to: document)
+        if let password, !password.isEmpty {
+            let name = sanitizedFileName("\(document.fileName)_\(document.targetLanguage.code)")
+            return try makeLockedPDF(images: pages, password: password, name: name)
+        }
         return try await export(
             document: document,
             as: .pdf,
             scannedImages: pages.isEmpty ? nil : pages
         )
+    }
+
+    func makeLockedPDF(images: [UIImage], password: String, name: String) throws -> URL {
+        let pages = images.isEmpty ? renderTextPages(TranslatedDocument(
+            fileName: name,
+            originalLanguage: Language.all[0],
+            targetLanguage: Language.all[0],
+            documentType: .pdf,
+            translatedText: "",
+            originalText: ""
+        )) : images
+        guard !pages.isEmpty else { throw ExportError.renderFailed }
+        let url = tmp(name, "pdf")
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+        var box = CGRect(x: 0, y: 0, width: 595, height: 842)
+        let info = [
+            kCGPDFContextUserPassword: password,
+            kCGPDFContextOwnerPassword: password
+        ] as CFDictionary
+        guard let consumer = CGDataConsumer(url: url as CFURL),
+              let context = CGContext(consumer: consumer, mediaBox: &box, info) else {
+            throw ExportError.renderFailed
+        }
+        for image in pages {
+            context.beginPDFPage(nil)
+            context.saveGState()
+            context.translateBy(x: 0, y: box.height)
+            context.scaleBy(x: 1, y: -1)
+            UIGraphicsPushContext(context)
+            let margin: CGFloat = 20
+            let maxW = box.width - margin * 2
+            let maxH = box.height - margin * 2
+            let scale = min(maxW / max(image.size.width, 1), maxH / max(image.size.height, 1))
+            let width = image.size.width * scale
+            let height = image.size.height * scale
+            let x = (box.width - width) / 2
+            let y = (box.height - height) / 2
+            image.draw(in: CGRect(x: x, y: y, width: width, height: height))
+            UIGraphicsPopContext()
+            context.restoreGState()
+            context.endPDFPage()
+        }
+        context.closePDF()
+        return url
     }
 
     // MARK: - Save Destinations

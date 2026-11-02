@@ -5,7 +5,6 @@ struct DocumentEditorView: View {
     @State private var pages: [UIImage]
     @State private var currentPage: Int
     let fileName: String
-    let documentID: UUID
     let onComplete: ([UIImage]) -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -50,19 +49,23 @@ struct DocumentEditorView: View {
     @State private var isPinchingBox = false
     @State private var zoomRequest: CGFloat = 1
     @State private var zoomRequestToken = 0
+    @State private var lensMode = false
+    @State private var rangeAnchorID: UUID?
+    @State private var rangeFocusID: UUID?
+    @State private var rangeAwaitingEnd = false
+    @State private var ignoreSelectTapUntil = Date.distantPast
+    @State private var lastPrintedTap: (id: UUID, time: Date)?
 
     init(
         pages: [UIImage],
         pageIndex: Int = 0,
         fileName: String,
-        documentID: UUID,
         initialMode: DocumentEditorMode = .edit,
         onComplete: @escaping ([UIImage]) -> Void
     ) {
         _pages = State(initialValue: pages)
         _currentPage = State(initialValue: min(max(pageIndex, 0), max(pages.count - 1, 0)))
         self.fileName = fileName
-        self.documentID = documentID
         self.onComplete = onComplete
         _mode = State(initialValue: initialMode)
         if initialMode == .markup {
@@ -76,7 +79,11 @@ struct DocumentEditorView: View {
     }
 
     private var pageElements: [EditorElement] {
-        elements.filter { $0.pageIndex == currentPage }.sorted { $0.zIndex < $1.zIndex }
+        elements.filter { $0.pageIndex == currentPage }.sorted { lhs, rhs in
+            if lhs.id == selectedID { return false }
+            if rhs.id == selectedID { return true }
+            return lhs.zIndex < rhs.zIndex
+        }
     }
 
     private var selected: EditorElement? {
@@ -92,21 +99,20 @@ struct DocumentEditorView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                topBar
-                if mode == .edit {
-                    editToolbar
-                } else {
-                    markupToolbar
-                }
-                canvas
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .layoutPriority(1)
+        VStack(spacing: 0) {
+            topBar
+            if mode == .edit {
+                editToolbar
+            } else {
+                markupToolbar
             }
+            zoomBar
+            canvas
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
             bottomChrome
-                .padding(.bottom, keyboardHeight)
         }
+        .padding(.bottom, keyboardHeight)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .photosPicker(isPresented: $showImagePicker, selection: $photoItem, matching: .images)
@@ -169,22 +175,23 @@ struct DocumentEditorView: View {
         .task { await recognizeCurrentPage() }
         .onChange(of: currentPage) { _, _ in
             selectedID = nil
+            rangeAnchorID = nil
+            rangeFocusID = nil
+            rangeAwaitingEnd = false
             zoomScale = 1
             zoomResetToken += 1
             zoomFocusRect = nil
             Task { await recognizeCurrentPage() }
         }
-        .onChange(of: selectedID) { _, id in
-            if let item = selected {
-                focusOnNormalizedRect(item.rect)
+        .onChange(of: selectedID) { _, _ in
+            if let item = selected, item.isText, item.kind != .existingText {
+                focusOnNormalizedRect(visibleEditRect(for: item))
             }
         }
         .onChange(of: keyboardHeight) { old, new in
-            if old < 50, new >= 50, selected?.isText == true {
+            if old < 50, new >= 50, let item = selected, item.isText, item.kind != .existingText {
                 inspectorExpanded = false
-                if let item = selected {
-                    focusOnNormalizedRect(item.rect)
-                }
+                focusOnNormalizedRect(visibleEditRect(for: item))
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
@@ -211,7 +218,10 @@ struct DocumentEditorView: View {
                     AppAnalytics.tap("editor_pick_font")
                     showFontPicker = true
                 },
-                onPlace: placeSelected
+                onPlace: placeSelected,
+                onExpand: item.kind == .existingText ? { scope in
+                    expandPrintedSelection(scope)
+                } : nil
             )
             .background(
                 Color(.systemBackground)
@@ -240,13 +250,7 @@ struct DocumentEditorView: View {
     }
 
     private var zoomBottomInset: CGFloat {
-        var inset = keyboardHeight
-        if selected?.isText == true {
-            inset += inspectorExpanded ? 258 : 168
-        } else if selected != nil {
-            inset += 64
-        }
-        return inset
+        pages.count > 1 ? 28 : 8
     }
 
     // MARK: - Top bar
@@ -392,6 +396,7 @@ struct DocumentEditorView: View {
 
     private var canvasAllowsPan: Bool {
         if usesDrawingDrag { return false }
+        if keyboardHeight > 40 { return true }
         if isPlacingSelection && zoomScale <= 1.05 { return false }
         return true
     }
@@ -423,7 +428,7 @@ struct DocumentEditorView: View {
                 Color(.systemGray5)
                 EditorZoomScrollView(
                     contentSize: fit,
-                    panEnabled: canvasAllowsPan,
+                    panEnabled: canvasAllowsPan && !lensMode,
                     pinchEnabled: canvasAllowsPinch,
                     zoomScale: $zoomScale,
                     resetToken: zoomResetToken,
@@ -432,54 +437,23 @@ struct DocumentEditorView: View {
                     bottomInset: zoomBottomInset,
                     zoomRequest: zoomRequest,
                     zoomRequestToken: zoomRequestToken,
-                    onTap: usesDrawingDrag ? nil : { point in handleCanvasTap(at: point) }
+                    oneFingerSelectsText: mode == .edit && editTool == .select && !lensMode,
+                    onTextDrag: (mode == .edit && editTool == .select && !lensMode) ? { start, current, ended in
+                        handleTextDrag(from: start, to: current, ended: ended)
+                    } : nil,
+                    onTap: (usesDrawingDrag || lensMode) ? nil : { point in handleCanvasTap(at: point) }
                 ) {
                     pageCanvas(size: fit)
-                        .onAppear { canvasSize = fit }
-                        .onChange(of: fit) { _, size in canvasSize = size }
+                        .onAppear {
+                            canvasSize = fit
+                            revealSelectionIfNeeded(previousHeight: 0, height: fit.height)
+                        }
+                        .onChange(of: fit) { old, size in
+                            canvasSize = size
+                            revealSelectionIfNeeded(previousHeight: old.height, height: size.height)
+                        }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                HStack(spacing: 8) {
-                    Button {
-                        AppAnalytics.tap("editor_zoom_out")
-                        requestZoom(zoomScale / 1.35)
-                    } label: {
-                        Image(systemName: "minus.magnifyingglass")
-                            .font(.caption.weight(.semibold))
-                            .padding(8)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .disabled(zoomScale <= 1.02)
-
-                    Button {
-                        AppAnalytics.tap("editor_zoom_in")
-                        requestZoom(min(zoomScale * 1.4, 6))
-                    } label: {
-                        Image(systemName: "plus.magnifyingglass")
-                            .font(.caption.weight(.semibold))
-                            .padding(8)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
-                    .disabled(zoomScale >= 5.9)
-
-                    if zoomScale > 1.05 {
-                        Button {
-                            AppAnalytics.tap("editor_zoom_reset")
-                            zoomScale = 1
-                            zoomResetToken += 1
-                        } label: {
-                            Text(String(format: "%.1f×  ·  Reset", zoomScale))
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(.ultraThinMaterial, in: Capsule())
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(10)
             }
             .overlay(alignment: .bottom) {
                 if pages.count > 1 {
@@ -513,6 +487,7 @@ struct DocumentEditorView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+            .documentMagnifier(image: pageImage, enabled: lensMode, immediate: true)
     }
 
     private func fittedPageSize(in bounds: CGSize) -> CGSize {
@@ -523,8 +498,74 @@ struct DocumentEditorView: View {
         return CGSize(width: imageSize.width * ratio, height: imageSize.height * ratio)
     }
 
+    private var zoomBar: some View {
+        HStack(spacing: 8) {
+            Button {
+                AppAnalytics.tap("editor_zoom_out")
+                requestZoom(zoomScale / 1.35)
+            } label: {
+                Image(systemName: "minus.magnifyingglass")
+                    .frame(width: 32, height: 32)
+            }
+            .disabled(zoomScale <= 1.02)
+
+            Button {
+                AppAnalytics.tap("editor_zoom_in")
+                requestZoom(min(zoomScale * 1.4, 8))
+            } label: {
+                Image(systemName: "plus.magnifyingglass")
+                    .frame(width: 32, height: 32)
+            }
+            .disabled(zoomScale >= 7.9)
+
+            Button {
+                AppAnalytics.tap("editor_lens", ["on": lensMode ? "false" : "true"])
+                lensMode.toggle()
+            } label: {
+                Label("Lens", systemImage: lensMode ? "circle.circle.fill" : "circle.circle")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(lensMode ? Color.blue.opacity(0.16) : Color(.systemGray6), in: Capsule())
+            }
+            .accessibilityLabel(lensMode ? "Reading lens on" : "Reading lens")
+
+            Spacer(minLength: 8)
+
+            if zoomScale > 1.05 {
+                Button {
+                    AppAnalytics.tap("editor_zoom_reset")
+                    zoomScale = 1
+                    zoomResetToken += 1
+                } label: {
+                    Text(String(format: "%.1f×  ·  Reset", zoomScale))
+                        .font(.caption.weight(.semibold))
+                }
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundColor(DocumentEditorPalette.accent)
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .background(Color(.systemBackground))
+    }
+
+    private func revealSelectionIfNeeded(previousHeight: CGFloat, height: CGFloat) {
+        guard abs(height - previousHeight) > 20, let item = selected, item.isText, item.kind != .existingText else { return }
+        focusOnNormalizedRect(visibleEditRect(for: item))
+    }
+
+    private func visibleEditRect(for item: EditorElement) -> CGRect {
+        guard let sourceID = item.sourceID,
+              let source = elements.first(where: { $0.id == sourceID }) else {
+            return item.rect
+        }
+        return source.rect.union(item.rect)
+    }
+
     private func requestZoom(_ scale: CGFloat) {
-        zoomRequest = min(max(scale, 1), 6)
+        zoomRequest = min(max(scale, 1), 8)
         zoomRequestToken += 1
     }
 
@@ -563,7 +604,7 @@ struct DocumentEditorView: View {
                     style: StrokeStyle(lineWidth: inkWidth(for: markupTool) * canvasSize.width, lineCap: .round, lineJoin: .round)
                 )
             }
-            if usesDrawingDrag {
+            if usesDrawingDrag, !lensMode {
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(canvasGesture)
@@ -572,7 +613,10 @@ struct DocumentEditorView: View {
                 formFieldHints
             }
             connectorArrows
-            if let item = selected, isPlacingSelection {
+            if mode == .edit, editTool == .select, !lensMode {
+                textRangeOverlay
+            }
+            if let item = selected, isPlacingSelection, item.kind != .existingText {
                 textBoxManipulator(item)
             }
         }
@@ -648,7 +692,13 @@ struct DocumentEditorView: View {
             switch element.kind {
             case .existingText:
                 if element.isModified {
-                    textBlock(element, in: rect)
+                    let padX = max(2, rect.height * 0.08)
+                    let padY = max(1, rect.height * 0.08)
+                    Color(hex: element.fillHex ?? "#FFFFFF")
+                        .frame(width: rect.width + padX * 2, height: rect.height + padY * 2)
+                    if !element.text.isEmpty {
+                        replacementPreview(element, wordRect: rect)
+                    }
                 }
             case .addedText:
                 if element.sourceID != nil {
@@ -732,8 +782,8 @@ struct DocumentEditorView: View {
             width: max(element.kind == .ink ? canvasSize.width : rect.width, 1),
             height: max(element.kind == .ink ? canvasSize.height : rect.height, 1)
         )
-        .overlay {
-            if isSelected, element.kind != .ink {
+                .overlay {
+            if isSelected, element.kind != .ink, element.kind != .existingText {
                 selectionChrome(rect: CGRect(origin: .zero, size: rect.size))
             }
         }
@@ -745,16 +795,28 @@ struct DocumentEditorView: View {
         .allowsHitTesting(false)
     }
 
-    private func textBlock(_ element: EditorElement, in rect: CGRect) -> some View {
-        Text(element.text)
-            .font(.custom(element.fontName, size: max(8, element.fontSize * canvasSize.height)))
+    private func textBlock(_ element: EditorElement, in rect: CGRect, exact: Bool = false) -> some View {
+        let pointSize = max(8, element.fontSize * canvasSize.height)
+        let text = Text(element.text)
+            .font(.custom(element.fontName, size: pointSize))
             .bold(element.isBold)
             .italic(element.isItalic)
             .underline(element.isUnderline)
             .foregroundColor(Color(hex: element.colorHex))
             .multilineTextAlignment(element.alignment == 1 ? .center : element.alignment == 2 ? .trailing : .leading)
-            .frame(width: rect.width, height: rect.height, alignment: element.alignment == 1 ? .center : element.alignment == 2 ? .trailing : .leading)
-            .minimumScaleFactor(0.5)
+        if exact {
+            return AnyView(text.lineLimit(1).fixedSize(horizontal: true, vertical: true))
+        }
+        return AnyView(
+            text
+                .lineLimit(3)
+                .minimumScaleFactor(0.8)
+                .frame(
+                    width: max(rect.width, 1),
+                    height: max(rect.height, 1),
+                    alignment: element.alignment == 1 ? .center : element.alignment == 2 ? .trailing : .leading
+                )
+        )
     }
 
     private func shapePreview(_ element: EditorElement, in rect: CGRect) -> some View {
@@ -996,10 +1058,12 @@ struct DocumentEditorView: View {
         AppAnalytics.tap("editor_text_place", ["place": placement.rawValue])
         guard let idx = selectedIndex else { return }
         let item = elements[idx]
+        let sourceElement: EditorElement? = {
+            guard let sourceID = item.sourceID else { return nil }
+            return elements.first(where: { $0.id == sourceID })
+        }()
         let source: CGRect = {
-            if let sourceID = item.sourceID, let original = elements.first(where: { $0.id == sourceID }) {
-                return original.rect
-            }
+            if let sourceElement { return sourceElement.rect }
             if let field = pageFormFields.first(where: { $0.rect.intersects(item.rect.insetBy(dx: -0.03, dy: -0.02)) }) {
                 return field.rect
             }
@@ -1031,10 +1095,18 @@ struct DocumentEditorView: View {
             rect.origin.x = min(0.98 - width, source.maxX + 0.012)
             rect.origin.y = source.midY - height / 2
         }
-        elements[idx].rect = rect.clampedNormalized()
-        if elements[idx].isText {
-            elements[idx].fontSize = min(max(elements[idx].rect.height * 0.72, 0.008), 0.12)
+        if placement == .onLine, let sourceElement = sourceElement {
+            elements[idx].adoptTypography(from: sourceElement)
+            elements[idx].rect = sourceElement.rect
+            elements[idx].fillHex = nil
+            elements[idx].sourceID = nil
+            if let sourceIndex = elements.firstIndex(where: { $0.id == sourceElement.id }) {
+                elements[sourceIndex].isModified = true
+                elements[sourceIndex].text = ""
+            }
+            return
         }
+        elements[idx].rect = rect.clampedNormalized()
     }
 
     // MARK: - Gestures
@@ -1154,16 +1226,25 @@ struct DocumentEditorView: View {
     }
 
     private func hitTest(at point: CGPoint, skippingMarkup: Bool = false) -> UUID? {
+        var wordHit: (id: UUID, area: CGFloat)?
         for element in pageElements.reversed() {
             if skippingMarkup && element.isMarkup { continue }
             if element.kind == .ink {
                 if inkHits(element, at: point) { return element.id }
                 continue
             }
-            let rect = element.rect.pixelRect(in: canvasSize).insetBy(dx: -6, dy: -6)
-            if rect.contains(point) { return element.id }
+            let rect = element.rect.pixelRect(in: canvasSize).insetBy(dx: -4, dy: -3)
+            guard rect.contains(point) else { continue }
+            if element.kind == .existingText {
+                let area = rect.width * rect.height
+                if wordHit == nil || area < wordHit!.area {
+                    wordHit = (element.id, area)
+                }
+                continue
+            }
+            return element.id
         }
-        return nil
+        return wordHit?.id
     }
 
     private var visibleFormFields: [DetectedFormField] {
@@ -1223,7 +1304,7 @@ struct DocumentEditorView: View {
         HStack(spacing: 8) {
             Image(systemName: "hand.tap")
                 .foregroundColor(.secondary)
-            Text("Pinch to zoom, then tap a field to fill text, date, or signature")
+            Text("Drag across the words. Drag a blue dot to adjust. Pinch to zoom.")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -1234,13 +1315,21 @@ struct DocumentEditorView: View {
     }
 
     private func handleSelectTap(at point: CGPoint) {
+        if Date() < ignoreSelectTapUntil { return }
         if dismissCallout(at: point) { return }
+        if let word = printedWord(at: point) {
+            selectPrintedRange(to: word)
+            return
+        }
+        rangeAnchorID = nil
+        rangeFocusID = nil
+        rangeAwaitingEnd = false
         if let id = hitTest(at: point), let element = elements.first(where: { $0.id == id }) {
             let isPrintedLabel = element.kind == .existingText
                 && DocumentEditorService.shared.isFieldLabel(element.text)
             if !isPrintedLabel {
                 if element.kind == .existingText {
-                    beginLinkedEdit(from: element)
+                    selectPrintedRange(to: element)
                     return
                 }
                 selectedID = id
@@ -1351,7 +1440,7 @@ struct DocumentEditorView: View {
         focusOnNormalizedRect(field.rect)
         switch field.kind {
         case .text:
-            insertText(in: field.rect, text: "")
+            insertText(in: field.rect, text: "", matching: field)
         case .date:
             pickedDate = Date()
             showDatePicker = true
@@ -1362,20 +1451,41 @@ struct DocumentEditorView: View {
         }
     }
 
-    private func insertText(in rect: CGRect, text: String) {
+    private func insertText(in rect: CGRect, text: String, matching field: DetectedFormField? = nil) {
         pushUndo()
-        let element = EditorElement.addedText(
+        var element = EditorElement.addedText(
             page: currentPage,
             rect: rect.clampedNormalized(),
             zIndex: nextZ,
             text: text,
             fontSize: max(0.016, rect.height * 0.72)
         )
+        if let source = typography(matching: field, near: rect) {
+            element.adoptTypography(from: source)
+        }
         nextZ += 1
         elements.append(element)
         selectedID = element.id
         inspectorExpanded = false
         editTool = .select
+    }
+
+    private func typography(matching field: DetectedFormField?, near rect: CGRect) -> EditorElement? {
+        if let field {
+            let labeled = pageElements.filter {
+                $0.kind == .existingText && !$0.text.isEmpty && $0.rect.intersects(field.labelRect.insetBy(dx: -0.012, dy: -0.01))
+            }
+            if let match = labeled.max(by: { $0.rect.width < $1.rect.width }) {
+                return match
+            }
+        }
+        return pageElements
+            .filter { $0.kind == .existingText && !$0.text.isEmpty }
+            .min { lhs, rhs in
+                let left = abs(lhs.rect.midY - rect.midY) * 4 + abs(lhs.rect.midX - rect.midX)
+                let right = abs(rhs.rect.midY - rect.midY) * 4 + abs(rhs.rect.midX - rect.midX)
+                return left < right
+            }
     }
 
     private func insertDate() {
@@ -1384,7 +1494,7 @@ struct DocumentEditorView: View {
         formatter.timeStyle = .none
         let text = formatter.string(from: pickedDate)
         if let field = pendingField {
-            insertText(in: field.rect, text: text)
+            insertText(in: field.rect, text: text, matching: field)
         }
         showDatePicker = false
         pendingField = nil
@@ -1419,7 +1529,7 @@ struct DocumentEditorView: View {
             pendingField = nil
             return
         }
-        insertText(in: field.rect, text: "✓")
+        insertText(in: field.rect, text: "✓", matching: field)
         pendingField = nil
     }
 
@@ -1613,6 +1723,414 @@ struct DocumentEditorView: View {
         elements.append(element)
     }
 
+    private var orderedPrintedWords: [EditorElement] {
+        let pitch = linePitch()
+        return elements.filter { $0.pageIndex == currentPage && $0.kind == .existingText }.sorted { lhs, rhs in
+            if abs(lhs.rect.midY - rhs.rect.midY) > pitch * 0.65 {
+                return lhs.rect.minY < rhs.rect.minY
+            }
+            return lhs.rect.minX < rhs.rect.minX
+        }
+    }
+
+    /// Typical printed line height. Tall recognition boxes are ignored so a paragraph stays separate lines.
+    private func linePitch() -> CGFloat {
+        let heights = elements
+            .filter { $0.pageIndex == currentPage && $0.kind == .existingText }
+            .map(\.rect.height)
+            .filter { $0 > 0.004 }
+            .sorted()
+        guard !heights.isEmpty else { return 0.015 }
+        return max(heights[min(heights.count - 1, heights.count * 3 / 10)], 0.008)
+    }
+
+    private var selectedWordRange: [EditorElement] {
+        let words = orderedPrintedWords
+        guard let anchor = rangeAnchorID, let focus = rangeFocusID,
+              let start = words.firstIndex(where: { $0.id == anchor }),
+              let end = words.firstIndex(where: { $0.id == focus }) else { return [] }
+        return Array(words[min(start, end)...max(start, end)])
+    }
+
+    private func handleTextDrag(from start: CGPoint, to current: CGPoint, ended: Bool) {
+        let moved = hypot(current.x - start.x, current.y - start.y)
+        guard moved > 8 else { return }
+        ignoreSelectTapUntil = Date().addingTimeInterval(0.35)
+        if let edge = selectionHandle(at: start) {
+            guard let word = wordForSelection(at: current, fromHandle: true) else { return }
+            moveSelectionEdge(edge, to: word)
+        } else if let startWord = wordForSelection(at: start, fromHandle: false) {
+            rangeAnchorID = startWord.id
+            if let word = wordForSelection(at: current, fromHandle: false) {
+                rangeFocusID = word.id
+            }
+        } else if let word = wordForSelection(at: current, fromHandle: false) {
+            if rangeAnchorID == nil { rangeAnchorID = word.id }
+            rangeFocusID = word.id
+        }
+        guard rangeAnchorID != nil, rangeFocusID != nil else { return }
+        rangeAwaitingEnd = false
+        syncPrintedRange()
+        _ = ended
+    }
+
+    /// Moves only the grabbed end. The other end stays, so extending the selection keeps every word already inside it.
+    private func moveSelectionEdge(_ edge: SelectionEdge, to word: EditorElement) {
+        let words = orderedPrintedWords
+        guard let anchor = rangeAnchorID, let focus = rangeFocusID,
+              let anchorIndex = words.firstIndex(where: { $0.id == anchor }),
+              let focusIndex = words.firstIndex(where: { $0.id == focus }),
+              let wordIndex = words.firstIndex(where: { $0.id == word.id }) else {
+            rangeFocusID = word.id
+            return
+        }
+        let earlier = min(anchorIndex, focusIndex)
+        let later = max(anchorIndex, focusIndex)
+        if edge == .start {
+            let nextEarlier = min(wordIndex, later)
+            rangeAnchorID = words[nextEarlier].id
+            rangeFocusID = words[later].id
+        } else {
+            let nextLater = max(wordIndex, earlier)
+            rangeAnchorID = words[earlier].id
+            rangeFocusID = words[nextLater].id
+        }
+    }
+
+    private var textRangeOverlay: some View {
+        let lines = selectionBands(for: selectedWordRange)
+        let unit = 1 / max(zoomScale, 1)
+        return ZStack {
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, rect in
+                RoundedRectangle(cornerRadius: max(1, 2 * unit))
+                    .fill(Color(hex: "#3B82F6").opacity(0.22))
+                    .frame(width: rect.width + 2 * unit, height: rect.height + 2 * unit)
+                    .position(x: rect.midX, y: rect.midY)
+            }
+            if let first = lines.first {
+                selectionCaret(at: CGPoint(x: first.minX, y: first.maxY), unit: unit)
+            }
+            if let last = lines.last {
+                selectionCaret(at: CGPoint(x: last.maxX, y: last.maxY), unit: unit)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func selectionBands(for words: [EditorElement]) -> [CGRect] {
+        var lines: [CGRect] = []
+        for word in words {
+            let rect = word.rect.pixelRect(in: canvasSize)
+            if let index = lines.indices.last,
+               abs(lines[index].midY - rect.midY) < linePitch() * canvasSize.height * 0.65 {
+                lines[index] = lines[index].union(rect)
+            } else {
+                lines.append(rect)
+            }
+        }
+        return lines
+    }
+
+    private func selectionCaret(at point: CGPoint, unit: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color(hex: "#2563EB"))
+                .frame(width: max(1.25, 2 * unit), height: 14 * unit)
+            Circle()
+                .fill(Color(hex: "#2563EB"))
+                .frame(width: 11 * unit, height: 11 * unit)
+                .overlay(Circle().stroke(Color.white, lineWidth: max(0.8, 1.5 * unit)))
+        }
+        .position(x: point.x, y: point.y + 8 * unit)
+    }
+
+    private enum SelectionEdge { case start, end }
+
+    private func selectionHandle(at point: CGPoint) -> SelectionEdge? {
+        let lines = selectionBands(for: selectedWordRange)
+        guard let first = lines.first, let last = lines.last else { return nil }
+        let slop = 44 / max(zoomScale, 1)
+        let start = caretGrabPoint(CGPoint(x: first.minX, y: first.maxY))
+        let end = caretGrabPoint(CGPoint(x: last.maxX, y: last.maxY))
+        let startDistance = hypot(point.x - start.x, point.y - start.y)
+        let endDistance = hypot(point.x - end.x, point.y - end.y)
+        if startDistance <= slop, startDistance <= endDistance { return .start }
+        if endDistance <= slop { return .end }
+        return nil
+    }
+
+    private func caretGrabPoint(_ anchor: CGPoint) -> CGPoint {
+        CGPoint(x: anchor.x, y: anchor.y + 15 / max(zoomScale, 1))
+    }
+
+    private func printedWord(at point: CGPoint) -> EditorElement? {
+        wordForSelection(at: point, fromHandle: false)
+    }
+
+    /// Picks the word on the line nearest the finger. A handle sits under the line, so that drag is lifted back onto its own line until the finger actually crosses into the next one.
+    private func wordForSelection(at point: CGPoint, fromHandle: Bool) -> EditorElement? {
+        let lines = printedLines()
+        guard !lines.isEmpty else { return nil }
+        let sampleY = fromHandle ? point.y - 15 / max(zoomScale, 1) : point.y
+        let sample = CGPoint(x: point.x, y: sampleY)
+        let rects = lines.map { linePixelRect($0) }
+        var chosen = 0
+        var matched = false
+        for index in rects.indices {
+            let above: CGFloat = index == 0
+                ? -.greatestFiniteMagnitude
+                : (rects[index - 1].maxY + rects[index].minY) / 2
+            let below: CGFloat = index + 1 == rects.count
+                ? .greatestFiniteMagnitude
+                : (rects[index].maxY + rects[index + 1].minY) / 2
+            if sample.y >= above, sample.y < below {
+                chosen = index
+                matched = true
+                break
+            }
+        }
+        if !matched {
+            chosen = rects.enumerated().min {
+                abs($0.element.midY - sample.y) < abs($1.element.midY - sample.y)
+            }?.offset ?? 0
+        }
+        return wordOnLine(lines[chosen], atX: sample.x)
+    }
+
+    private func printedLines() -> [[EditorElement]] {
+        var lines: [[EditorElement]] = []
+        for word in orderedPrintedWords {
+            if let index = lines.indices.last {
+                let anchor = lines[index][0]
+                if abs(anchor.rect.midY - word.rect.midY) < linePitch() * 0.65 {
+                    lines[index].append(word)
+                    continue
+                }
+            }
+            lines.append([word])
+        }
+        return lines
+    }
+
+    private func linePixelRect(_ line: [EditorElement]) -> CGRect {
+        guard let first = line.first else { return .zero }
+        return line.dropFirst().reduce(first.rect.pixelRect(in: canvasSize)) {
+            $0.union($1.rect.pixelRect(in: canvasSize))
+        }
+    }
+
+    private func wordOnLine(_ line: [EditorElement], atX x: CGFloat) -> EditorElement? {
+        let sorted = line.sorted { $0.rect.minX < $1.rect.minX }
+        guard !sorted.isEmpty else { return nil }
+        for (index, word) in sorted.enumerated() {
+            if index == sorted.count - 1 { return word }
+            let rect = word.rect.pixelRect(in: canvasSize)
+            let next = sorted[index + 1].rect.pixelRect(in: canvasSize)
+            if x < (rect.maxX + next.minX) / 2 { return word }
+        }
+        return sorted.last
+    }
+
+    private func selectPrintedRange(to word: EditorElement) {
+        if let last = lastPrintedTap, last.id == word.id, Date().timeIntervalSince(last.time) < 0.35 {
+            return
+        }
+        lastPrintedTap = (word.id, Date())
+        if rangeAwaitingEnd, let anchor = rangeAnchorID, anchor != word.id {
+            rangeFocusID = word.id
+            rangeAwaitingEnd = false
+        } else {
+            rangeAnchorID = word.id
+            rangeFocusID = word.id
+            rangeAwaitingEnd = true
+        }
+        syncPrintedRange()
+    }
+
+    private func syncPrintedRange() {
+        let words = selectedWordRange
+        guard let first = words.first, let idx = elements.firstIndex(where: { $0.id == first.id }) else { return }
+        let ids = Set(words.map(\.id))
+        for index in elements.indices where elements[index].pageIndex == currentPage && elements[index].kind == .existingText {
+            if !ids.contains(elements[index].id), elements[index].isModified, elements[index].text.isEmpty {
+                elements[index].text = elements[index].originalText
+                elements[index].isModified = false
+            }
+        }
+        if !elements[idx].isModified {
+            elements[idx].text = selectionFieldText(from: words)
+        } else {
+            coverPrintedRange(keepingTextOn: first.id)
+        }
+        selectedID = first.id
+        inspectorExpanded = false
+    }
+
+    private func coverPrintedRange(keepingTextOn keeper: UUID) {
+        for word in selectedWordRange {
+            guard let index = elements.firstIndex(where: { $0.id == word.id }) else { continue }
+            if elements[index].fillHex == nil {
+                elements[index].fillHex = DocumentEditorService.shared.paperHex(in: pageImage, around: elements[index].rect)
+            }
+            elements[index].isModified = true
+            if word.id != keeper {
+                elements[index].text = ""
+            } else {
+                applySelectionStyle(to: index)
+                matchFontSizeToLine(index: index)
+                elements[index].zIndex = nextZ
+                nextZ += 1
+            }
+        }
+    }
+
+    private func expandPrintedSelection(_ scope: PrintedSelectionScope) {
+        let words = orderedPrintedWords
+        guard !words.isEmpty else { return }
+        let range = selectedWordRange
+        let seed = range.first ?? words.first(where: { $0.id == selectedID })
+        guard let seed, let seedIndex = words.firstIndex(where: { $0.id == seed.id }) else { return }
+        var lower = range.first.flatMap { item in words.firstIndex(where: { $0.id == item.id }) } ?? seedIndex
+        var upper = range.last.flatMap { item in words.firstIndex(where: { $0.id == item.id }) } ?? seedIndex
+        let pitch = linePitch()
+        func breaks(_ before: EditorElement, _ after: EditorElement) -> Bool {
+            let gap = after.rect.minY - before.rect.maxY
+            if scope == .paragraph {
+                return gap > pitch * 0.85 || abs(after.rect.midY - before.rect.midY) > pitch * 1.45
+            }
+            if gap > pitch * 0.85 { return true }
+            let ending = before.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ending.hasSuffix(".") || ending.hasSuffix("!") || ending.hasSuffix("?")
+        }
+        while lower > 0, !breaks(words[lower - 1], words[lower]) {
+            lower -= 1
+        }
+        while upper + 1 < words.count, !breaks(words[upper], words[upper + 1]) {
+            upper += 1
+        }
+        rangeAnchorID = words[lower].id
+        rangeFocusID = words[upper].id
+        rangeAwaitingEnd = false
+        syncPrintedRange()
+    }
+
+    private func applySelectionStyle(to index: Int) {
+        let source = selectedWordRange.max { $0.originalText.count < $1.originalText.count } ?? elements[index]
+        elements[index].fontName = source.fontName
+        elements[index].isBold = source.isBold
+        elements[index].isItalic = source.isItalic
+        elements[index].isUnderline = source.isUnderline
+        elements[index].colorHex = source.colorHex
+    }
+
+    private func replacementPreview(_ element: EditorElement, wordRect: CGRect) -> some View {
+        let group = replacementGroup(containing: element)
+        let union = group.reduce(element.rect) { $0.union($1.rect) }.pixelRect(in: canvasSize)
+        let pointSize = max(6, element.fontSize * canvasSize.height)
+        return Text(element.text)
+            .font(.custom(element.fontName, size: pointSize))
+            .bold(element.isBold)
+            .italic(element.isItalic)
+            .underline(element.isUnderline)
+            .foregroundColor(Color(hex: element.colorHex))
+            .lineLimit(group.count > 1 ? 12 : 1)
+            .frame(width: max(union.width, 1), height: max(union.height, pointSize), alignment: .topLeading)
+            .offset(x: union.midX - wordRect.midX, y: union.midY - wordRect.midY)
+    }
+
+    private func replacementGroup(containing element: EditorElement) -> [EditorElement] {
+        let pitch = linePitch()
+        let words = elements.filter {
+            $0.pageIndex == element.pageIndex && $0.kind == .existingText && $0.isModified
+        }.sorted { lhs, rhs in
+            if abs(lhs.rect.midY - rhs.rect.midY) > pitch * 0.65 {
+                return lhs.rect.minY < rhs.rect.minY
+            }
+            return lhs.rect.minX < rhs.rect.minX
+        }
+        var groups: [[EditorElement]] = []
+        for word in words {
+            if word.text.isEmpty, let last = groups.last?.last, word.rect.minY - last.rect.maxY < pitch * 1.25 {
+                groups[groups.count - 1].append(word)
+            } else {
+                groups.append([word])
+            }
+        }
+        return groups.first { $0.contains { $0.id == element.id } } ?? [element]
+    }
+
+    private func beginInPlaceEdit(from source: EditorElement) {
+        guard let idx = elements.firstIndex(where: { $0.id == source.id }) else { return }
+        if !elements[idx].isModified {
+            pushUndo()
+            elements[idx].isModified = true
+            if elements[idx].fillHex == nil {
+                elements[idx].fillHex = DocumentEditorService.shared.paperHex(in: pageImage, around: elements[idx].rect)
+            }
+            matchFontSizeToLine(index: idx)
+        }
+        elements[idx].zIndex = nextZ
+        nextZ += 1
+        selectedID = source.id
+        inspectorExpanded = false
+    }
+
+    private func selectionFieldText(from words: [EditorElement]) -> String {
+        var result = ""
+        var previous: EditorElement?
+        for word in words {
+            let piece = word.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !piece.isEmpty else { continue }
+            if let previous {
+                let sameLine = abs(word.rect.midY - previous.rect.midY) < max(word.rect.height, previous.rect.height) * 0.7
+                let gap = word.rect.minX - previous.rect.maxX
+                let height = max(word.rect.height, previous.rect.height)
+                let sameWord = sameLine && gap < height * 0.22
+                let punctuation = piece.unicodeScalars.allSatisfy { CharacterSet.punctuationCharacters.contains($0) }
+                if sameWord || punctuation {
+                    result += piece
+                } else {
+                    if !result.hasSuffix(" ") { result += " " }
+                    result += piece
+                }
+            } else {
+                result = piece
+            }
+            previous = word
+        }
+        return result
+    }
+
+    private func matchFontSizeToLine(index: Int) {
+        guard canvasSize.height > 1 else { return }
+        let element = elements[index]
+        let pitch = linePitch()
+        let own = max(element.rect.height, 0.006)
+        let line = own > pitch * 1.6 ? pitch : own
+        let pixelHeight = line * canvasSize.height
+        let probe = editorUIFont(name: element.fontName, size: 100, bold: element.isBold, italic: element.isItalic)
+        let cap = max(probe.capHeight, 1)
+        let point = 100 * (pixelHeight * 0.68) / cap
+        elements[index].fontSize = min(max(point / canvasSize.height, 0.006), 0.06)
+    }
+
+    private func growWidthToFit(index: Int) {
+        guard canvasSize.width > 1 else { return }
+        let element = elements[index]
+        guard element.isText, !element.text.isEmpty else { return }
+        let multiLine = replacementGroup(containing: element).count > 1
+            && selectionBands(for: replacementGroup(containing: element)).count > 1
+        if multiLine { return }
+        let point = max(6, element.fontSize * canvasSize.height)
+        let font = editorUIFont(name: element.fontName, size: point, bold: element.isBold, italic: element.isItalic)
+        let measured = (element.text as NSString).size(withAttributes: [.font: font]).width + 4
+        let needed = measured / canvasSize.width
+        let limit = max(element.rect.width, 0.98 - element.rect.minX)
+        if needed > element.rect.width {
+            elements[index].rect.size.width = min(needed, limit)
+        }
+    }
+
     private func beginLinkedEdit(from source: EditorElement, alreadyPushedUndo: Bool = false) {
         if let existing = elements.first(where: {
             $0.sourceID == source.id && $0.kind == .addedText && $0.pageIndex == currentPage
@@ -1632,14 +2150,24 @@ struct DocumentEditorView: View {
             fontSize: max(0.016, source.fontSize),
             sourceID: source.id
         )
+        element.adoptTypography(from: source)
         element.originalText = source.text
         element.fillHex = "#FFFBEB"
-        element.colorHex = "#9A3412"
+        element.colorHex = readableCalloutColor(element.colorHex)
         nextZ += 1
         elements.append(element)
         selectedID = element.id
         inspectorExpanded = false
         focusOnNormalizedRect(source.rect.union(rect).insetBy(dx: -0.02, dy: -0.02))
+    }
+
+    private func readableCalloutColor(_ hex: String) -> String {
+        let color = UIColor(editorHex: hex)
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+        return (red + green + blue) / 3 > 0.72 ? "#111111" : hex
     }
 
     private func calloutRect(for source: CGRect) -> CGRect {
@@ -1728,6 +2256,12 @@ struct DocumentEditorView: View {
             elements[idx].isModified = true
         }
         transform(&elements[idx])
+        if elements[idx].kind == .existingText, elements[idx].isModified {
+            coverPrintedRange(keepingTextOn: elements[idx].id)
+            growWidthToFit(index: idx)
+        } else if elements[idx].isText, elements[idx].isModified {
+            growWidthToFit(index: idx)
+        }
     }
 
     private func copySelected() {
@@ -1865,12 +2399,29 @@ struct DocumentEditorView: View {
         ocrPages.insert(currentPage)
         var z = nextZ
         for block in blocks {
-            let exists = elements.contains {
-                $0.pageIndex == currentPage && $0.kind == .existingText && $0.rect.intersects(block.rect.insetBy(dx: 0.002, dy: 0.002)) && $0.originalText == block.text
+            for piece in block.editablePieces {
+                let exists = elements.contains {
+                    $0.pageIndex == currentPage
+                        && $0.kind == .existingText
+                        && $0.rect.intersects(piece.rect.insetBy(dx: 0.002, dy: 0.002))
+                        && $0.originalText == piece.text
+                }
+                if exists { continue }
+                elements.append(.existingText(
+                    page: currentPage,
+                    rect: piece.rect,
+                    text: piece.text,
+                    zIndex: z,
+                    fontName: piece.fontName,
+                    fontSize: piece.fontSize,
+                    isBold: piece.isBold,
+                    isItalic: piece.isItalic,
+                    isUnderline: piece.isUnderline,
+                    colorHex: piece.colorHex,
+                    paperHex: DocumentEditorService.shared.paperHex(in: image, around: piece.rect)
+                ))
+                z += 1
             }
-            if exists { continue }
-            elements.append(.existingText(page: currentPage, rect: block.rect, text: block.text, zIndex: z))
-            z += 1
         }
         nextZ = z
         let detected = DocumentEditorService.shared.detectFormFields(from: blocks, page: currentPage)
@@ -1980,6 +2531,8 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
     var bottomInset: CGFloat
     var zoomRequest: CGFloat
     var zoomRequestToken: Int
+    var oneFingerSelectsText: Bool
+    var onTextDrag: ((CGPoint, CGPoint, Bool) -> Void)?
     var onTap: ((CGPoint) -> Void)?
     var content: Content
 
@@ -1994,6 +2547,8 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         bottomInset: CGFloat,
         zoomRequest: CGFloat,
         zoomRequestToken: Int,
+        oneFingerSelectsText: Bool = false,
+        onTextDrag: ((CGPoint, CGPoint, Bool) -> Void)? = nil,
         onTap: ((CGPoint) -> Void)?,
         @ViewBuilder content: () -> Content
     ) {
@@ -2007,6 +2562,8 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         self.bottomInset = bottomInset
         self.zoomRequest = zoomRequest
         self.zoomRequestToken = zoomRequestToken
+        self.oneFingerSelectsText = oneFingerSelectsText
+        self.onTextDrag = onTextDrag
         self.onTap = onTap
         self.content = content()
     }
@@ -2019,7 +2576,7 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         let scroll = UIScrollView()
         scroll.delegate = context.coordinator
         scroll.minimumZoomScale = 1
-        scroll.maximumZoomScale = 6
+        scroll.maximumZoomScale = 8
         scroll.bouncesZoom = true
         scroll.backgroundColor = .clear
         scroll.showsHorizontalScrollIndicator = false
@@ -2061,6 +2618,14 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         context.coordinator.singleTap = singleTap
         context.coordinator.doubleTap = doubleTap
 
+        let selectPan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleSelectPan(_:)))
+        selectPan.minimumNumberOfTouches = 1
+        selectPan.maximumNumberOfTouches = 1
+        selectPan.delegate = context.coordinator
+        scroll.addGestureRecognizer(selectPan)
+        context.coordinator.selectPan = selectPan
+        singleTap.require(toFail: selectPan)
+
         return scroll
     }
 
@@ -2069,8 +2634,11 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         context.coordinator.hostingController.rootView = content
         context.coordinator.widthConstraint?.constant = max(contentSize.width, 1)
         context.coordinator.heightConstraint?.constant = max(contentSize.height, 1)
+        scroll.maximumZoomScale = 8
         scroll.panGestureRecognizer.isEnabled = panEnabled
+        scroll.panGestureRecognizer.minimumNumberOfTouches = oneFingerSelectsText ? 2 : 1
         scroll.pinchGestureRecognizer?.isEnabled = pinchEnabled
+        context.coordinator.selectPan?.isEnabled = oneFingerSelectsText && onTextDrag != nil
         context.coordinator.singleTap?.isEnabled = onTap != nil
         context.coordinator.doubleTap?.isEnabled = pinchEnabled
         if context.coordinator.lastResetToken != resetToken {
@@ -2089,18 +2657,20 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         } else if context.coordinator.lastZoomRequestToken != zoomRequestToken {
             context.coordinator.lastZoomRequestToken = zoomRequestToken
             scroll.setZoomScale(min(max(zoomRequest, scroll.minimumZoomScale), scroll.maximumZoomScale), animated: true)
-        } else {
+        } else if scroll.zoomScale <= 1.02 {
             context.coordinator.centerContent(in: scroll)
         }
     }
 
-    final class Coordinator: NSObject, UIScrollViewDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var parent: EditorZoomScrollView
         let hostingController: UIHostingController<Content>
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
         var singleTap: UITapGestureRecognizer?
         var doubleTap: UITapGestureRecognizer?
+        var selectPan: UIPanGestureRecognizer?
+        var isUserZooming = false
         var lastResetToken = -1
         var lastFocusToken = -1
         var lastZoomRequestToken = 0
@@ -2115,14 +2685,43 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
             hostingController.view
         }
 
+        func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+            isUserZooming = true
+        }
+
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             parent.zoomScale = scrollView.zoomScale
-            centerContent(in: scrollView)
+            if scrollView.zoomScale <= 1.02 {
+                centerContent(in: scrollView)
+            }
         }
 
         func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+            isUserZooming = false
             parent.zoomScale = scale
-            centerContent(in: scrollView)
+            if scale <= 1.02 {
+                centerContent(in: scrollView)
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            gestureRecognizer === selectPan && otherGestureRecognizer is UIPinchGestureRecognizer
+                || otherGestureRecognizer === selectPan && gestureRecognizer is UIPinchGestureRecognizer
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === selectPan,
+                  let scroll = otherGestureRecognizer.view as? UIScrollView else { return false }
+            return otherGestureRecognizer === scroll.panGestureRecognizer
+        }
+
+        @objc func handleSelectPan(_ recognizer: UIPanGestureRecognizer) {
+            guard !isUserZooming, let callback = parent.onTextDrag else { return }
+            let current = recognizer.location(in: hostingController.view)
+            let translation = recognizer.translation(in: hostingController.view)
+            let start = CGPoint(x: current.x - translation.x, y: current.y - translation.y)
+            let ended = recognizer.state == .ended || recognizer.state == .cancelled || recognizer.state == .failed
+            callback(start, current, ended)
         }
 
         func centerContent(in scrollView: UIScrollView) {
@@ -2134,27 +2733,29 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
         func zoomTo(_ rect: CGRect, in scroll: UIScrollView, bottomInset: CGFloat, animated: Bool) {
             let bounds = scroll.bounds
             guard bounds.width > 1, bounds.height > 1, rect.width > 1, rect.height > 1 else { return }
-            let visibleHeight = max(160, bounds.height - bottomInset)
+            let visibleHeight = max(120, bounds.height - bottomInset)
             let scale = min(
                 bounds.width / rect.width,
                 visibleHeight / rect.height,
                 scroll.maximumZoomScale
             )
-            let finalScale = min(max(scale, 1.15), scroll.maximumZoomScale)
+            let finalScale = min(max(scale, 1.35), scroll.maximumZoomScale)
             let apply = {
                 scroll.setZoomScale(finalScale, animated: false)
                 scroll.layoutIfNeeded()
+                self.centerContent(in: scroll)
                 var offset = CGPoint(
                     x: rect.midX * finalScale - bounds.width / 2,
-                    y: rect.midY * finalScale - visibleHeight / 2
+                    y: rect.midY * finalScale - visibleHeight * 0.38
                 )
-                let maxX = max(0, scroll.contentSize.width - bounds.width)
-                let maxY = max(0, scroll.contentSize.height - bounds.height)
-                offset.x = min(max(-scroll.contentInset.left, offset.x), maxX)
-                offset.y = min(max(-scroll.contentInset.top, offset.y), maxY)
+                let minX = -scroll.contentInset.left
+                let minY = -scroll.contentInset.top
+                let maxX = max(minX, scroll.contentSize.width - bounds.width + scroll.contentInset.right)
+                let maxY = max(minY, scroll.contentSize.height - bounds.height + scroll.contentInset.bottom)
+                offset.x = min(max(minX, offset.x), maxX)
+                offset.y = min(max(minY, offset.y), maxY)
                 scroll.setContentOffset(offset, animated: false)
                 self.parent.zoomScale = scroll.zoomScale
-                self.centerContent(in: scroll)
             }
             if animated {
                 UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseInOut, .allowUserInteraction], animations: apply)
@@ -2180,6 +2781,11 @@ private struct EditorZoomScrollView<Content: View>: UIViewRepresentable {
     }
 }
 
+private enum PrintedSelectionScope {
+    case sentence
+    case paragraph
+}
+
 private struct EditTextPanel: View {
     let element: EditorElement
     @Binding var expanded: Bool
@@ -2191,6 +2797,7 @@ private struct EditTextPanel: View {
     let onDelete: () -> Void
     let onPickFont: () -> Void
     var onPlace: ((TextPlacement) -> Void)?
+    var onExpand: ((PrintedSelectionScope) -> Void)? = nil
     @FocusState private var isFocused: Bool
 
     private var pointSize: Double {
@@ -2231,7 +2838,9 @@ private struct EditTextPanel: View {
                     set: { value in onChange { $0.text = value; $0.isModified = true } }
                 ))
                 .textFieldStyle(.plain)
-                .font(.body)
+                .font(.custom(element.fontName, size: 17))
+                .bold(element.isBold)
+                .italic(element.isItalic)
                 .focused($isFocused)
                 Button {
                     AppAnalytics.tap("editor_text_clear")
@@ -2264,7 +2873,17 @@ private struct EditTextPanel: View {
                         .buttonStyle(.plain)
                     }
                 }
-                Text("Drag the box to move · Pinch to resize text")
+                if element.kind == .existingText, let onExpand {
+                    HStack(spacing: 6) {
+                        Button("Sentence") { onExpand(.sentence) }
+                        Button("Paragraph") { onExpand(.paragraph) }
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.caption.weight(.semibold))
+                }
+                Text(element.kind == .existingText
+                 ? "Drag from the first word to the last, or tap Sentence or Paragraph."
+                 : "Drag the box to move · Pinch to resize text")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
