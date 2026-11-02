@@ -5,9 +5,10 @@ import PhotosUI
 struct ScanView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var vm = ScanViewModel()
+    @State private var showFullPreview = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if vm.session.pages.isEmpty {
                     emptyState
@@ -59,15 +60,31 @@ struct ScanView: View {
                         pageIndex: idx,
                         documentID: vm.session.id
                     ) { signed in
-                        for i in signed.indices where i < vm.session.pages.count {
-                            vm.session.pages[i].processedImage = signed[i]
-                        }
-                        vm.persistToHistory(signed: true, images: signed)
+                        vm.applyRenderedPages(signed, signed: true)
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $vm.showDocumentEditor) {
+                if let idx = vm.currentPageIndex {
+                    DocumentEditorView(
+                        pages: vm.session.pages.map(\.displayImage),
+                        pageIndex: idx,
+                        fileName: "Scanned_Document",
+                        documentID: vm.session.id,
+                        initialMode: vm.documentEditorMode
+                    ) { edited in
+                        vm.applyRenderedPages(edited, edited: true)
                     }
                 }
             }
             .sheet(isPresented: $vm.showTranslateSheet) {
                 ScanTranslateView(vm: vm)
+            }
+            .fullScreenCover(isPresented: $showFullPreview) {
+                ScanFullPreview(
+                    pages: vm.session.pages.map(\.displayImage),
+                    pageIndex: vm.currentPageIndex ?? 0
+                )
             }
             .onChange(of: vm.photoPickerItems) { items in
                 Task { await vm.loadPhotos(from: items) }
@@ -131,6 +148,7 @@ struct ScanView: View {
                 }
             }
             .padding(.horizontal)
+            .frame(maxWidth: 560)
 
             Spacer()
         }
@@ -157,12 +175,20 @@ struct ScanView: View {
                 ZStack {
                     Color.black.opacity(0.92)
 
-                    Image(uiImage: page.displayImage)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 12)
+                    Button {
+                        AppAnalytics.tap("scan_open_preview")
+                        showFullPreview = true
+                    } label: {
+                        Image(uiImage: page.displayImage)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .id("\(page.id.uuidString)-\(page.renderRevision)")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.plain)
 
                     VStack {
                         HStack {
@@ -174,6 +200,7 @@ struct ScanView: View {
                                     .padding(.vertical, 5)
                                     .background(Color.green.opacity(0.85))
                                     .clipShape(Capsule())
+                                    .allowsHitTesting(false)
                             }
                             Spacer()
                             Button {
@@ -187,10 +214,30 @@ struct ScanView: View {
                                     .background(Color.white.opacity(0.18))
                                     .clipShape(Circle())
                             }
+                            Button {
+                                AppAnalytics.tap("scan_open_preview")
+                                showFullPreview = true
+                            } label: {
+                                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(8)
+                                    .background(Color.white.opacity(0.18))
+                                    .clipShape(Circle())
+                            }
                         }
                         .padding(.horizontal, 14)
                         .padding(.top, 8)
                         Spacer()
+                            .allowsHitTesting(false)
+                        Text("Tap to preview · Pinch to zoom")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundColor(.white.opacity(0.9))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.black.opacity(0.45), in: Capsule())
+                            .padding(.bottom, 8)
+                            .allowsHitTesting(false)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -213,6 +260,7 @@ struct ScanView: View {
                             Image(uiImage: page.displayImage)
                                 .resizable()
                                 .scaledToFill()
+                                .id("\(page.id.uuidString)-\(page.renderRevision)")
                                 .frame(width: 52, height: 72)
                                 .clipped()
                                 .cornerRadius(6)
@@ -416,6 +464,19 @@ struct ScanView: View {
 
     private var editorActionBar: some View {
         VStack(spacing: 10) {
+            DocumentEditorLaunchRow(
+                onEdit: {
+                    AppAnalytics.tap("scan_edit_document")
+                    vm.documentEditorMode = .edit
+                    vm.showDocumentEditor = true
+                },
+                onHighlight: {
+                    AppAnalytics.tap("scan_highlight_document")
+                    vm.documentEditorMode = .markup
+                    vm.showDocumentEditor = true
+                }
+            )
+
             Button {
                 AppAnalytics.tap("scan_sign_stamp")
                 vm.showSignStampEditor = true
@@ -581,5 +642,45 @@ struct ScanOptionButton: View {
             .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct ScanFullPreview: View {
+    let pages: [UIImage]
+    @State private var pageIndex: Int
+    @Environment(\.dismiss) private var dismiss
+
+    init(pages: [UIImage], pageIndex: Int) {
+        self.pages = pages
+        _pageIndex = State(initialValue: min(max(pageIndex, 0), max(pages.count - 1, 0)))
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                TabView(selection: $pageIndex) {
+                    ForEach(pages.indices, id: \.self) { index in
+                        ZoomablePageImage(image: pages[index])
+                            .tag(index)
+                            .padding(8)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: pages.count > 1 ? .automatic : .never))
+                .background(Color.black)
+
+                Text(pages.count > 1 ? "Page \(pageIndex + 1) of \(pages.count)  ·  Pinch to zoom" : "Pinch to zoom · Double-tap to zoom")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 10)
+            }
+            .background(Color(.systemBackground).ignoresSafeArea())
+            .navigationTitle("Preview")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done", action: AppAnalytics.action("scan_preview_done") { dismiss() })
+                }
+            }
+        }
     }
 }

@@ -13,6 +13,8 @@ class ScanViewModel: ObservableObject {
     @Published var showCropEditor = false
     @Published var showTranslateSheet = false
     @Published var showSignStampEditor = false
+    @Published var showDocumentEditor = false
+    @Published var documentEditorMode: DocumentEditorMode = .edit
     @Published var showActionSheet = false
 
     @Published var editingPageIndex: Int?
@@ -96,12 +98,14 @@ class ScanViewModel: ObservableObject {
 
     func toggleBeforeAfter() {
         guard let idx = currentPageIndex, idx < session.pages.count else { return }
-        let page = session.pages[idx]
-        if page.processedImage != nil {
-            session.pages[idx].processedImage = nil
-        } else if let base = page.baseImage {
-            session.pages[idx].processedImage = processImage(base)
+        var next = session
+        if next.pages[idx].processedImage != nil {
+            next.pages[idx].processedImage = nil
+        } else if let base = next.pages[idx].baseImage {
+            next.pages[idx].processedImage = processImage(base)
         }
+        next.pages[idx].renderRevision += 1
+        session = next
     }
 
     // MARK: - Sign & Stamp
@@ -120,16 +124,30 @@ class ScanViewModel: ObservableObject {
 
     // MARK: - Filters
 
+    func applyRenderedPages(_ images: [UIImage], edited: Bool = false, signed: Bool = false) {
+        var next = session
+        for i in images.indices where i < next.pages.count {
+            next.pages[i].processedImage = images[i]
+            next.pages[i].baseImage = images[i]
+            next.pages[i].renderRevision += 1
+        }
+        session = next
+        persistToHistory(signed: signed, images: images, edited: edited)
+    }
+
     func applyFilter(_ filter: ScanFilter) {
         session.filter = filter
         reapplyFilter()
     }
 
     func reapplyFilter() {
-        for i in 0..<session.pages.count {
-            let base = session.pages[i].baseImage ?? session.pages[i].originalImage
-            session.pages[i].processedImage = processImage(base)
+        var next = session
+        for i in 0..<next.pages.count {
+            let base = next.pages[i].baseImage ?? next.pages[i].originalImage
+            next.pages[i].processedImage = processImage(base)
+            next.pages[i].renderRevision += 1
         }
+        session = next
     }
 
     private func processImage(_ image: UIImage, forceEnhance: Bool = false) -> UIImage {
@@ -181,11 +199,11 @@ class ScanViewModel: ObservableObject {
         return doc
     }
 
-    func persistToHistory(signed: Bool, images: [UIImage]? = nil) {
+    func persistToHistory(signed: Bool, images: [UIImage]? = nil, edited: Bool = false) {
         let pages = images ?? session.pages.map(\.displayImage)
         guard !pages.isEmpty else { return }
         let english = Language.all.first { $0.id == "en" } ?? Language.all[0]
-        let doc = TranslatedDocument(
+        var doc = TranslatedDocument(
             id: session.id,
             fileName: signed ? "Signed_Document" : "Scanned_Document",
             originalLanguage: english,
@@ -195,6 +213,7 @@ class ScanViewModel: ObservableObject {
             originalText: "",
             pageCount: pages.count
         )
+        if edited { doc.wasEdited = true }
         HistoryStore.shared.add(doc, images: pages, signed: signed)
     }
 

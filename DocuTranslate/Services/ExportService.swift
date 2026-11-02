@@ -63,7 +63,7 @@ class ExportService {
 
     func imagesForSigning(_ document: TranslatedDocument, existing: [UIImage], preferExisting: Bool = false) -> [UIImage] {
         // Signed/stamped pages are the source of truth. Never replace them with a fresh text render.
-        if !existing.isEmpty, preferExisting || document.wasSigned == true {
+        if !existing.isEmpty, preferExisting || document.wasSigned == true || document.wasEdited == true {
             return existing
         }
         let rendered = renderTextPages(document)

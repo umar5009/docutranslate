@@ -1,11 +1,21 @@
 import SwiftUI
 import Combine
 
+struct DocumentPreviewRequest: Identifiable {
+    let id: UUID
+    let document: TranslatedDocument
+
+    init(_ document: TranslatedDocument) {
+        self.id = UUID()
+        self.document = document
+    }
+}
+
 class AppState: ObservableObject {
     @Published var currentTab: Tab = .home
     @Published var recentDocuments: [TranslatedDocument] = []
     @Published var showOnboarding: Bool = false
-    @Published var documentToPreview: TranslatedDocument?
+    @Published var documentToPreview: DocumentPreviewRequest?
 
     private var historyCancellable: AnyCancellable?
 
@@ -39,8 +49,28 @@ class AppState: ObservableObject {
             }
     }
 
-    func addDocument(_ doc: TranslatedDocument, images: [UIImage] = [], signed: Bool = false) {
-        HistoryStore.shared.add(doc, images: images, signed: signed)
+    func addDocument(
+        _ doc: TranslatedDocument,
+        images: [UIImage] = [],
+        signed: Bool = false,
+        unsignedImages: [UIImage]? = nil,
+        replaceSignedPages: Bool = false
+    ) {
+        HistoryStore.shared.add(
+            doc,
+            images: images,
+            signed: signed,
+            unsignedImages: unsignedImages,
+            replaceSignedPages: replaceSignedPages
+        )
+    }
+
+    func storedDocument(for document: TranslatedDocument) -> TranslatedDocument {
+        HistoryStore.shared.documents.first(where: { $0.id == document.id }) ?? document
+    }
+
+    func openDocument(_ document: TranslatedDocument) {
+        documentToPreview = DocumentPreviewRequest(storedDocument(for: document))
     }
 
     func revealSavedDocument(_ document: TranslatedDocument) {
@@ -50,7 +80,7 @@ class AppState: ObservableObject {
         Task { @MainActor in
             documentToPreview = nil
             try? await Task.sleep(nanoseconds: 350_000_000)
-            documentToPreview = document
+            openDocument(document)
         }
     }
 
@@ -62,18 +92,18 @@ class AppState: ObservableObject {
         var doc = document
         let alreadySigned = HistoryStore.shared.documents.first(where: { $0.id == document.id })?.wasSigned == true
         if alreadySigned { doc.wasSigned = true }
-        let keepExisting = preferExistingImages || doc.wasSigned == true
+        let keepImages = preferExistingImages || doc.wasSigned == true || doc.wasEdited == true
         let pages = ExportService.shared.imagesForSigning(
             doc,
             existing: images,
-            preferExisting: keepExisting
+            preferExisting: keepImages
         )
-        addDocument(doc, images: pages, signed: keepExisting)
+        addDocument(doc, images: pages, signed: alreadySigned || doc.wasSigned == true)
         revealSavedDocument(doc)
     }
 
     func images(for document: TranslatedDocument) -> [UIImage] {
-        HistoryStore.shared.images(for: document)
+        HistoryStore.shared.images(for: storedDocument(for: document))
     }
 
     func deleteDocuments(ids: [UUID]) {

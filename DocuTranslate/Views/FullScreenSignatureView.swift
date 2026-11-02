@@ -13,7 +13,7 @@ struct FullScreenSignatureView: View {
     private let service = SignStampService.shared
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ZStack {
                 Color(.systemGroupedBackground).ignoresSafeArea()
 

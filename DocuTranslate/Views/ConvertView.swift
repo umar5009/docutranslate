@@ -6,10 +6,12 @@ struct ConvertView: View {
     @StateObject private var vm = ConvertViewModel()
     @State private var showSignStampPrompt = false
     @State private var showSignStampEditor = false
+    @State private var showDocumentEditor = false
+    @State private var editorMode: DocumentEditorMode = .edit
     @State private var isExporting = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     header
@@ -26,6 +28,8 @@ struct ConvertView: View {
                     }
                 }
                 .padding()
+                .frame(maxWidth: 920)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("Convert")
             .navigationBarTitleDisplayMode(.large)
@@ -59,6 +63,24 @@ struct ConvertView: View {
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         vm.processedDocument = updated
                         appState.addDocument(updated, images: signed, signed: true)
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showDocumentEditor) {
+                if let doc = vm.processedDocument {
+                    DocumentEditorView(
+                        pages: ExportService.shared.imagesForSigning(doc, existing: vm.pages, preferExisting: true),
+                        pageIndex: 0,
+                        fileName: doc.fileName,
+                        documentID: doc.id,
+                        initialMode: editorMode
+                    ) { edited in
+                        vm.pages = edited
+                        var updated = vm.processedDocument ?? doc
+                        updated.wasEdited = true
+                        updated.pageCount = max(updated.pageCount, edited.count)
+                        vm.processedDocument = updated
+                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true)
                     }
                 }
             }
@@ -263,6 +285,19 @@ struct ConvertView: View {
             )) { updated in
                 appState.addDocument(updated, images: vm.pages, signed: updated.wasSigned == true)
             }
+
+            DocumentEditorLaunchRow(
+                onEdit: {
+                    AppAnalytics.tap("convert_edit_document")
+                    editorMode = .edit
+                    showDocumentEditor = true
+                },
+                onHighlight: {
+                    AppAnalytics.tap("convert_highlight_document")
+                    editorMode = .markup
+                    showDocumentEditor = true
+                }
+            )
 
             Button {
                 AppAnalytics.tap("convert_sign_stamp")

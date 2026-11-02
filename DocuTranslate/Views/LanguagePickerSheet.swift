@@ -22,7 +22,7 @@ struct LanguagePickerSheet: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 // Auto-detect option
                 if showAutoDetect {

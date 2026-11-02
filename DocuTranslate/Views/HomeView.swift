@@ -2,11 +2,11 @@ import SwiftUI
 
 struct HomeView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showDocumentPicker = false
-    @State private var selectedDocument: TranslatedDocument?
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
                     // Hero banner
@@ -26,6 +26,8 @@ struct HomeView: View {
                     }
                     .padding()
                 }
+                .frame(maxWidth: contentMaxWidth)
+                .frame(maxWidth: .infinity)
             }
             .navigationTitle("DocuTranslate")
             .navigationBarTitleDisplayMode(.large)
@@ -40,13 +42,15 @@ struct HomeView: View {
                     }
                 }
             }
-            .sheet(item: $selectedDocument) { doc in
-                HistoryDocumentViewer(
-                    document: doc,
-                    images: appState.images(for: doc)
-                )
-            }
         }
+    }
+
+    private var contentMaxWidth: CGFloat {
+        horizontalSizeClass == .regular ? 920 : .infinity
+    }
+
+    private var actionColumnCount: Int {
+        horizontalSizeClass == .regular ? 3 : 2
     }
 
     // MARK: - Hero Banner
@@ -68,7 +72,7 @@ struct HomeView: View {
                     .font(.title2.bold())
                     .foregroundColor(.white)
 
-                Text("60+ languages • Scan, sign, stamp & export")
+                Text("60+ languages • Scan, edit, highlight, sign & export")
                     .font(.subheadline)
                     .foregroundColor(.white.opacity(0.75))
 
@@ -96,7 +100,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "Quick Actions")
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: actionColumnCount), spacing: 12) {
                 QuickActionCard(
                     icon: "doc.badge.plus",
                     title: "Upload Document",
@@ -135,6 +139,20 @@ struct HomeView: View {
                 ) {
                     AppAnalytics.tap("home_sign_stamp")
                     appState.currentTab = .scan
+                }
+
+                QuickActionCard(
+                    icon: "pencil",
+                    title: "Edit & Highlight",
+                    subtitle: "Text, shapes, markup",
+                    color: Color(hex: "#FF375F")
+                ) {
+                    AppAnalytics.tap("home_edit_document")
+                    if appState.recentDocuments.isEmpty {
+                        appState.currentTab = .scan
+                    } else {
+                        appState.currentTab = .history
+                    }
                 }
 
                 QuickActionCard(
@@ -185,7 +203,7 @@ struct HomeView: View {
             ForEach(appState.recentDocuments.prefix(3)) { doc in
                 Button {
                     AppAnalytics.tap("home_open_recent", ["file": doc.fileName])
-                    selectedDocument = doc
+                    appState.openDocument(doc)
                 } label: {
                     DocumentRowCard(document: doc)
                 }

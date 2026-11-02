@@ -76,7 +76,7 @@ struct ExportView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             VStack(spacing: 24) {
                 documentCard
                 RemoveBrandingBanner(document: $liveDocument) { updated in
@@ -219,7 +219,10 @@ struct SavedExportAlert: View {
             Color.black.opacity(0.55)
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
-                .onTapGesture(perform: onOK)
+                .onTapGesture {
+                    AppAnalytics.tap("export_saved_ok")
+                    onOK()
+                }
 
             VStack(spacing: 18) {
                 Image(systemName: "checkmark.circle.fill")
@@ -236,7 +239,10 @@ struct SavedExportAlert: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
-                Button(action: onOK) {
+                Button(action: {
+                    AppAnalytics.tap("export_saved_ok")
+                    onOK()
+                }) {
                     Text("OK")
                         .font(.headline)
                         .foregroundColor(.primary)
@@ -306,10 +312,12 @@ struct ScanTranslateView: View {
     @State private var extracting = false
     @State private var showSignStampPrompt = false
     @State private var showSignStampEditor = false
+    @State private var showDocumentEditor = false
+    @State private var editorMode: DocumentEditorMode = .edit
     @State private var isExporting = false
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     langSelector
@@ -324,6 +332,16 @@ struct ScanTranslateView: View {
                             onSignStamp: {
                                 AppAnalytics.tap("scan_translate_sign")
                                 showSignStampEditor = true
+                            },
+                            onEditDocument: {
+                                AppAnalytics.tap("scan_translate_edit")
+                                editorMode = .edit
+                                showDocumentEditor = true
+                            },
+                            onHighlight: {
+                                AppAnalytics.tap("scan_translate_highlight")
+                                editorMode = .markup
+                                showDocumentEditor = true
                             }
                         )
                         ExportFormatRow(isEnabled: !isExporting) {
@@ -418,15 +436,35 @@ struct ScanTranslateView: View {
                             tvm.translatedDocument = updated
                         }
                     ) { signed in
-                        for i in signed.indices where i < vm.session.pages.count {
-                            vm.session.pages[i].processedImage = signed[i]
-                        }
+                        vm.applyRenderedPages(signed, signed: true)
                         var updated = tvm.translatedDocument ?? doc
                         updated.wasSigned = true
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         tvm.translatedDocument = updated
                         tvm.translationResult = updated
                         appState.addDocument(updated, images: signed, signed: true)
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $showDocumentEditor) {
+                if let doc = tvm.translatedDocument ?? tvm.translationResult {
+                    DocumentEditorView(
+                        pages: ExportService.shared.imagesForSigning(
+                            doc,
+                            existing: vm.session.pages.map(\.displayImage)
+                        ),
+                        pageIndex: 0,
+                        fileName: doc.fileName,
+                        documentID: doc.id,
+                        initialMode: editorMode
+                    ) { edited in
+                        vm.applyRenderedPages(edited, edited: true)
+                        var updated = tvm.translatedDocument ?? doc
+                        updated.wasEdited = true
+                        updated.pageCount = max(updated.pageCount, edited.count)
+                        tvm.translatedDocument = updated
+                        tvm.translationResult = updated
+                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true)
                     }
                 }
             }

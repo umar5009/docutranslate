@@ -310,8 +310,10 @@ struct TranslatedDocument: Identifiable, Codable {
     var pageCount: Int = 1
     var fileSize: String = "—"
     var pageImageFileNames: [String]? = nil
+    var unsignedPageImageFileNames: [String]? = nil
     var wasSigned: Bool? = nil
     var wasConverted: Bool? = nil
+    var wasEdited: Bool? = nil
     var brandingRemoved: Bool? = nil
 
     var thumbnail: UIImage? {
@@ -322,7 +324,7 @@ struct TranslatedDocument: Identifiable, Codable {
     var showsBrandingTag: Bool {
         if brandingRemoved == true { return false }
         if BrandingStore.hasRemovedTag(for: id) { return false }
-        return wasSigned == true || wasConverted == true || documentType == .scanned
+        return wasSigned == true || wasConverted == true || wasEdited == true || documentType == .scanned
     }
 
     var formattedDate: String {
@@ -365,6 +367,7 @@ struct ScannedPage: Identifiable {
     var rotation: Double = 0
     var extractedText: String = ""
     var wasEnhanced: Bool = false
+    var renderRevision: Int = 0
 
     var displayImage: UIImage { processedImage ?? baseImage ?? originalImage }
 }
