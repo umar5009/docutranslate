@@ -49,13 +49,7 @@ struct TranslateView: View {
                 if let doc = vm.translatedDocument {
                     SignStampEditorView(
                         pages: ExportService.shared.imagesForSigning(doc, existing: vm.exportImages),
-                        pageIndex: 0,
-                        documentID: doc.id,
-                        onBrandingRemoved: {
-                            var updated = doc
-                            updated.brandingRemoved = true
-                            vm.translatedDocument = updated
-                        }
+                        pageIndex: 0
                     ) { signed in
                         vm.exportImages = signed
                         var updated = vm.translatedDocument ?? doc
@@ -63,7 +57,7 @@ struct TranslateView: View {
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         vm.translatedDocument = updated
                         vm.translationResult = updated
-                        appState.addDocument(updated, images: signed, signed: true)
+                        appState.addDocument(updated, images: signed, signed: true, confirmProtection: true)
                     }
                 }
             }
@@ -73,7 +67,6 @@ struct TranslateView: View {
                         pages: ExportService.shared.imagesForSigning(doc, existing: vm.exportImages),
                         pageIndex: 0,
                         fileName: doc.fileName,
-                        documentID: doc.id,
                         initialMode: editorMode
                     ) { edited in
                         vm.exportImages = edited
@@ -82,7 +75,7 @@ struct TranslateView: View {
                         updated.pageCount = max(updated.pageCount, edited.count)
                         vm.translatedDocument = updated
                         vm.translationResult = updated
-                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true)
+                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true, confirmProtection: true)
                     }
                 }
             }

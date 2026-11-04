@@ -26,6 +26,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>DocuTranslate uses Face ID to lock confidential documents so only you can open them.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>DocuTranslate uses your camera to scan documents and photograph stamps.</string>
 	<key>NSMicrophoneUsageDescription</key>

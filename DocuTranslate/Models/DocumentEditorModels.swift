@@ -185,7 +185,28 @@ struct EditorElement: Identifiable, Equatable {
         }
     }
 
-    static func existingText(page: Int, rect: CGRect, text: String, zIndex: Int) -> EditorElement {
+    mutating func adoptTypography(from other: EditorElement) {
+        fontName = other.fontName
+        fontSize = other.fontSize
+        isBold = other.isBold
+        isItalic = other.isItalic
+        isUnderline = other.isUnderline
+        colorHex = other.colorHex
+    }
+
+    static func existingText(
+        page: Int,
+        rect: CGRect,
+        text: String,
+        zIndex: Int,
+        fontName: String = "Helvetica",
+        fontSize: CGFloat? = nil,
+        isBold: Bool = false,
+        isItalic: Bool = false,
+        isUnderline: Bool = false,
+        colorHex: String = "#111111",
+        paperHex: String? = nil
+    ) -> EditorElement {
         EditorElement(
             id: UUID(),
             pageIndex: page,
@@ -194,7 +215,13 @@ struct EditorElement: Identifiable, Equatable {
             zIndex: zIndex,
             text: text,
             originalText: text,
-            fontSize: max(0.012, rect.height * 0.82)
+            fontName: fontName,
+            fontSize: fontSize ?? max(0.012, rect.height * 0.82),
+            isBold: isBold,
+            isItalic: isItalic,
+            isUnderline: isUnderline,
+            colorHex: colorHex,
+            fillHex: paperHex
         )
     }
 
@@ -278,9 +305,44 @@ struct DetectedFormField: Identifiable, Equatable {
     var labelRect: CGRect
 }
 
+struct OCRTextRun: Equatable {
+    var text: String
+    var rect: CGRect
+    var fontSize: CGFloat
+    var fontName: String
+    var isBold: Bool
+    var isItalic: Bool
+    var isUnderline: Bool
+    var colorHex: String
+}
+
 struct OCRTextBlock {
     var text: String
     var rect: CGRect
+    var fontSize: CGFloat = 0.02
+    var fontName: String = "Helvetica"
+    var isBold = false
+    var isItalic = false
+    var isUnderline = false
+    var colorHex: String = "#111111"
+    var runs: [OCRTextRun] = []
+
+    /// One piece per word, so editing covers that word and leaves the rest of the paragraph.
+    var editablePieces: [OCRTextRun] {
+        if runs.isEmpty {
+            return [OCRTextRun(
+                text: text,
+                rect: rect,
+                fontSize: fontSize,
+                fontName: fontName,
+                isBold: isBold,
+                isItalic: isItalic,
+                isUnderline: isUnderline,
+                colorHex: colorHex
+            )]
+        }
+        return runs
+    }
 }
 
 struct EditorConnector {

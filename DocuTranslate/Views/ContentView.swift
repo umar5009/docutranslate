@@ -50,6 +50,20 @@ struct ContentView: View {
             )
             .id(request.id)
         }
+        .sheet(item: $appState.pendingSave) { pending in
+            ConfidentialSaveSheet(fileName: pending.document.fileName) { choice in
+                Task { await appState.finishPendingSave(choice) }
+            }
+            .interactiveDismissDisabled()
+        }
+        .alert("Couldn’t lock the document", isPresented: .init(
+            get: { appState.saveGateError != nil },
+            set: { if !$0 { appState.saveGateError = nil } }
+        )) {
+            Button("OK", role: .cancel) { appState.saveGateError = nil }
+        } message: {
+            Text(appState.saveGateError ?? "")
+        }
         .onAppear {
             let appearance = UITabBarAppearance()
             appearance.configureWithDefaultBackground()

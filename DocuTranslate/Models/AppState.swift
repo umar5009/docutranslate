@@ -16,6 +16,8 @@ class AppState: ObservableObject {
     @Published var recentDocuments: [TranslatedDocument] = []
     @Published var showOnboarding: Bool = false
     @Published var documentToPreview: DocumentPreviewRequest?
+    @Published var pendingSave: PendingDocumentSave?
+    @Published var saveGateError: String?
 
     private var historyCancellable: AnyCancellable?
 
@@ -54,7 +56,72 @@ class AppState: ObservableObject {
         images: [UIImage] = [],
         signed: Bool = false,
         unsignedImages: [UIImage]? = nil,
-        replaceSignedPages: Bool = false
+        replaceSignedPages: Bool = false,
+        confirmProtection: Bool = false,
+        revealAfter: Bool = false
+    ) {
+        if confirmProtection {
+            pendingSave = PendingDocumentSave(
+                document: doc,
+                images: images,
+                signed: signed,
+                unsignedImages: unsignedImages,
+                replaceSignedPages: replaceSignedPages,
+                revealAfter: revealAfter
+            )
+            return
+        }
+        commitDocument(
+            doc,
+            images: images,
+            signed: signed,
+            unsignedImages: unsignedImages,
+            replaceSignedPages: replaceSignedPages
+        )
+    }
+
+    func finishPendingSave(_ choice: SaveProtectionChoice) async {
+        guard var pending = pendingSave else { return }
+        switch choice {
+        case .cancel:
+            pendingSave = nil
+        case .standard:
+            pending.document.requiresFaceID = false
+            ConfidentialStore.removeProtection(id: pending.document.id)
+            pendingSave = nil
+            commitDocument(
+                pending.document,
+                images: pending.images,
+                signed: pending.signed,
+                unsignedImages: pending.unsignedImages,
+                replaceSignedPages: pending.replaceSignedPages
+            )
+            if pending.revealAfter { revealSavedDocument(pending.document) }
+        case .faceID:
+            do {
+                try await ConfidentialStore.authorizeAndArm(id: pending.document.id)
+                pending.document.requiresFaceID = true
+                pendingSave = nil
+                commitDocument(
+                    pending.document,
+                    images: pending.images,
+                    signed: pending.signed,
+                    unsignedImages: pending.unsignedImages,
+                    replaceSignedPages: pending.replaceSignedPages
+                )
+                if pending.revealAfter { revealSavedDocument(pending.document) }
+            } catch {
+                saveGateError = error.localizedDescription
+            }
+        }
+    }
+
+    private func commitDocument(
+        _ doc: TranslatedDocument,
+        images: [UIImage],
+        signed: Bool,
+        unsignedImages: [UIImage]?,
+        replaceSignedPages: Bool
     ) {
         HistoryStore.shared.add(
             doc,
@@ -98,8 +165,13 @@ class AppState: ObservableObject {
             existing: images,
             preferExisting: keepImages
         )
-        addDocument(doc, images: pages, signed: alreadySigned || doc.wasSigned == true)
-        revealSavedDocument(doc)
+        addDocument(
+            doc,
+            images: pages,
+            signed: alreadySigned || doc.wasSigned == true,
+            confirmProtection: true,
+            revealAfter: true
+        )
     }
 
     func images(for document: TranslatedDocument) -> [UIImage] {

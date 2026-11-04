@@ -428,13 +428,7 @@ struct ScanTranslateView: View {
                             doc,
                             existing: vm.session.pages.map(\.displayImage)
                         ),
-                        pageIndex: 0,
-                        documentID: doc.id,
-                        onBrandingRemoved: {
-                            var updated = doc
-                            updated.brandingRemoved = true
-                            tvm.translatedDocument = updated
-                        }
+                        pageIndex: 0
                     ) { signed in
                         vm.applyRenderedPages(signed, signed: true)
                         var updated = tvm.translatedDocument ?? doc
@@ -442,7 +436,7 @@ struct ScanTranslateView: View {
                         updated.brandingRemoved = updated.brandingRemoved == true || BrandingStore.hasRemovedTag(for: doc.id)
                         tvm.translatedDocument = updated
                         tvm.translationResult = updated
-                        appState.addDocument(updated, images: signed, signed: true)
+                        appState.addDocument(updated, images: signed, signed: true, confirmProtection: true)
                     }
                 }
             }
@@ -455,7 +449,6 @@ struct ScanTranslateView: View {
                         ),
                         pageIndex: 0,
                         fileName: doc.fileName,
-                        documentID: doc.id,
                         initialMode: editorMode
                     ) { edited in
                         vm.applyRenderedPages(edited, edited: true)
@@ -464,7 +457,7 @@ struct ScanTranslateView: View {
                         updated.pageCount = max(updated.pageCount, edited.count)
                         tvm.translatedDocument = updated
                         tvm.translationResult = updated
-                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true)
+                        appState.addDocument(updated, images: edited, signed: updated.wasSigned == true, confirmProtection: true)
                     }
                 }
             }
@@ -589,5 +582,129 @@ struct DocumentScannerWrapper: UIViewControllerRepresentable {
         }
         func documentCameraViewControllerDidCancel(_ c: VNDocumentCameraViewController) { dismiss() }
         func documentCameraViewController(_ c: VNDocumentCameraViewController, didFailWithError e: Error) { dismiss() }
+    }
+}
+
+// MARK: - Reading lens
+
+extension View {
+    /// Hold and drag to read the page through a circular magnifying glass.
+    /// `immediate` follows the finger as soon as it touches, for an explicit lens mode.
+    func documentMagnifier(image: UIImage, enabled: Bool = true, immediate: Bool = false) -> some View {
+        modifier(DocumentMagnifierModifier(image: image, enabled: enabled, immediate: immediate))
+    }
+}
+
+private struct DocumentMagnifierModifier: ViewModifier {
+    let image: UIImage
+    var enabled: Bool
+    var immediate: Bool
+    @State private var focus: CGPoint?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let surface = content.overlay {
+            GeometryReader { geo in
+                if enabled, let focus {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white)
+                            .overlay(Circle().stroke(Color.black.opacity(0.55), lineWidth: 1.5))
+                            .frame(width: 16, height: 16)
+                            .position(focus)
+                        MagnifierGlass(image: image, displayedSize: geo.size, focus: focus)
+                    }
+                    .allowsHitTesting(false)
+                }
+            }
+        }
+        if !enabled {
+            surface
+        } else if immediate {
+            surface.gesture(immediateDrag)
+        } else {
+            surface.simultaneousGesture(holdDrag)
+        }
+    }
+
+    private var immediateDrag: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { focus = $0.location }
+            .onEnded { _ in focus = nil }
+    }
+
+    private var holdDrag: some Gesture {
+        LongPressGesture(minimumDuration: 0.28)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+            .onChanged { value in
+                if case .second(true, let drag?) = value {
+                    focus = drag.location
+                }
+            }
+            .onEnded { _ in
+                focus = nil
+            }
+    }
+}
+
+private struct MagnifierGlass: View {
+    let image: UIImage
+    let displayedSize: CGSize
+    let focus: CGPoint
+    var diameter: CGFloat = 188
+    var zoom: CGFloat = 2.8
+
+    var body: some View {
+        let width = max(displayedSize.width, 1)
+        let height = max(displayedSize.height, 1)
+        let clamped = CGPoint(
+            x: min(max(focus.x, 0), width),
+            y: min(max(focus.y, 0), height)
+        )
+        ZStack(alignment: .topLeading) {
+            Image(uiImage: image)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: width * zoom, height: height * zoom)
+                .offset(
+                    x: diameter / 2 - clamped.x * zoom,
+                    y: diameter / 2 - clamped.y * zoom
+                )
+        }
+        .frame(width: diameter, height: diameter, alignment: .topLeading)
+        .clipShape(Circle())
+        .overlay {
+            Circle()
+                .strokeBorder(Color.white, lineWidth: 6)
+        }
+        .overlay {
+            Circle()
+                .strokeBorder(Color.black.opacity(0.35), lineWidth: 1)
+        }
+        .overlay {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.34), Color.white.opacity(0.02)],
+                        startPoint: .topLeading,
+                        endPoint: .center
+                    )
+                )
+                .padding(6)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 5)
+        .position(lensCenter(for: clamped, in: displayedSize))
+    }
+
+    private func lensCenter(for focus: CGPoint, in size: CGSize) -> CGPoint {
+        let radius = diameter / 2
+        let gap: CGFloat = 36
+        var y = focus.y - radius - gap
+        if y < radius + 6 {
+            y = min(size.height - radius - 6, focus.y + radius + gap)
+        }
+        let x = min(max(focus.x, radius + 8), max(radius + 8, size.width - radius - 8))
+        y = min(max(y, radius + 6), max(radius + 6, size.height - radius - 6))
+        return CGPoint(x: x, y: y)
     }
 }

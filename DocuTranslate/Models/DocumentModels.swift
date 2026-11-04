@@ -315,16 +315,16 @@ struct TranslatedDocument: Identifiable, Codable {
     var wasConverted: Bool? = nil
     var wasEdited: Bool? = nil
     var brandingRemoved: Bool? = nil
+    var requiresFaceID: Bool? = nil
+    var confidentialFileName: String? = nil
 
     var thumbnail: UIImage? {
         thumbnailData.flatMap { UIImage(data: $0) }
     }
 
-    /// Converted, signed/stamped, and scanned files carry a small footer tag unless the user paid to remove it.
+    /// A diagonal watermark. The first three edited, signed, or stamped documents stay clean.
     var showsBrandingTag: Bool {
-        if brandingRemoved == true { return false }
-        if BrandingStore.hasRemovedTag(for: id) { return false }
-        return wasSigned == true || wasConverted == true || wasEdited == true || documentType == .scanned
+        BrandingStore.showsPaywallWatermark(for: self)
     }
 
     var formattedDate: String {

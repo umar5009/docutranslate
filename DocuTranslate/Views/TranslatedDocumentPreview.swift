@@ -9,6 +9,10 @@ struct TranslatedDocumentPreview: View {
 
     @State private var selectedTab: PreviewTab = .translated
     @State private var previewPage = 0
+    @State private var showPaywall = false
+    @State private var showDocumentViewer = false
+    @State private var renderedPages: [UIImage] = []
+    @ObservedObject private var brandingStore = BrandingStore.shared
 
     enum PreviewTab: String, CaseIterable {
         case original = "Original"
@@ -43,8 +47,16 @@ struct TranslatedDocumentPreview: View {
         .background(Color(.systemBackground))
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
+        .onAppear(perform: loadRenderedPagesIfNeeded)
         .onChange(of: document.id) { _, _ in
             previewPage = 0
+            loadRenderedPagesIfNeeded()
+        }
+        .sheet(isPresented: $showPaywall) {
+            RemoveTagPaymentSheet(documentID: document.id) { }
+        }
+        .fullScreenCover(isPresented: $showDocumentViewer) {
+            HistoryDocumentViewer(document: document, images: previewPages)
         }
     }
 
@@ -126,32 +138,74 @@ struct TranslatedDocumentPreview: View {
             .padding(.vertical, 10)
             .background(Color(hex: "#1a56d6").opacity(0.08))
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if selectedTab == .translated, let pageImage = currentPreviewImage {
-                        Image(uiImage: pageImage)
-                            .resizable()
-                            .scaledToFit()
-                            .cornerRadius(8)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(Color(.systemGray4), lineWidth: 1)
-                            )
+            if selectedTab == .translated, let pageImage = currentPreviewImage {
+                Image(uiImage: pageImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 420)
+                    .aspectRatio(pageImage.size, contentMode: .fit)
+                    .background(Color.white)
+                    .documentMagnifier(image: pageImage)
+                    .overlay {
+                        GeometryReader { geo in
+                            if showsPaywallWatermark {
+                                PaywallWatermarkBadge(canvasSize: geo.size) {
+                                    AppAnalytics.tap("watermark_paywall", ["source": "preview"])
+                                    showPaywall = true
+                                }
+                                .allowsHitTesting(false)
+                            }
+                        }
+                        .allowsHitTesting(false)
                     }
-
-                    formattedText(currentText)
-                }
-                .padding(20)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color(.systemGray4), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
             }
-            .frame(maxHeight: 420)
+
+            Text("Hold your finger on a line to read it in the lens.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+
+            Button {
+                AppAnalytics.tap("preview_view_document")
+                showDocumentViewer = true
+            } label: {
+                Label("View document", systemImage: "doc.text.magnifyingglass")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(Color.blue)
+                    .cornerRadius(12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            ScrollView {
+                formattedText(currentText)
+                    .padding(20)
+            }
+            .frame(maxHeight: 220)
             .background(Color(.systemBackground))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(Color(.systemGray4), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.04), radius: 4, y: 2)
+    }
+
+    private var showsPaywallWatermark: Bool {
+        _ = brandingStore.watermarkRevision
+        return document.showsBrandingTag
     }
 
     private var pageCount: Int {
@@ -164,9 +218,21 @@ struct TranslatedDocumentPreview: View {
         )
     }
 
+    private var previewPages: [UIImage] {
+        if !scannedImages.isEmpty { return scannedImages }
+        return renderedPages
+    }
+
     private var currentPreviewImage: UIImage? {
-        guard previewPage < scannedImages.count else { return scannedImages.first }
-        return scannedImages[previewPage]
+        guard !previewPages.isEmpty else { return nil }
+        if previewPage < previewPages.count { return previewPages[previewPage] }
+        return previewPages.first
+    }
+
+    private func loadRenderedPagesIfNeeded() {
+        guard scannedImages.isEmpty else { return }
+        let doc = document
+        renderedPages = ExportService.shared.renderTextPages(doc)
     }
 
     private var currentText: String {

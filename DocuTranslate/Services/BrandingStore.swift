@@ -7,10 +7,14 @@ final class BrandingStore: ObservableObject {
     static let shared = BrandingStore()
     static let productID = "com.docutranslate.ios.remove_branding"
 
+    nonisolated static let freeDocumentLimit = 3
+
     @Published private(set) var priceText = "$0.99"
     @Published private(set) var isLoading = false
+    @Published private(set) var watermarkRevision = 0
 
     private let removedKey = "brandingRemovedDocumentIDs"
+    nonisolated private static let completedKey = "editedSignedStampedDocumentIDs"
     private var product: Product?
     private var updatesTask: Task<Void, Never>?
 
@@ -21,6 +25,60 @@ final class BrandingStore: ObservableObject {
 
     nonisolated static func hasRemovedTag(for id: UUID) -> Bool {
         removedIDs().contains(id.uuidString)
+    }
+
+    /// Records an edited, signed, or stamped document. The first three stay free of the watermark.
+    nonisolated static func recordCompletedDocument(_ id: UUID) {
+        var ids = completedIDs()
+        let key = id.uuidString
+        guard !ids.contains(key) else { return }
+        ids.append(key)
+        UserDefaults.standard.set(ids, forKey: completedKey)
+        Task { @MainActor in
+            shared.watermarkRevision += 1
+        }
+    }
+
+    /// Keeps the oldest edited, signed, or stamped documents as the three free files.
+    nonisolated static func seedCompletedDocumentsIfNeeded(_ documents: [TranslatedDocument]) {
+        guard UserDefaults.standard.object(forKey: completedKey) == nil else { return }
+        var seen = Set<String>()
+        var ids: [String] = []
+        let acted = documents
+            .filter { $0.wasEdited == true || $0.wasSigned == true }
+            .sorted { $0.createdAt < $1.createdAt }
+        for document in acted {
+            let key = document.id.uuidString
+            if seen.insert(key).inserted {
+                ids.append(key)
+            }
+        }
+        UserDefaults.standard.set(ids, forKey: completedKey)
+    }
+
+    nonisolated static func showsWatermarkWhileEditing(_ id: UUID) -> Bool {
+        if hasRemovedTag(for: id) { return false }
+        let ids = completedIDs()
+        if let index = ids.firstIndex(of: id.uuidString) {
+            return index >= freeDocumentLimit
+        }
+        return ids.count >= freeDocumentLimit
+    }
+
+    nonisolated static func showsPaywallWatermark(for document: TranslatedDocument) -> Bool {
+        if document.brandingRemoved == true || hasRemovedTag(for: document.id) { return false }
+        let acted = document.wasEdited == true || document.wasSigned == true
+        guard acted else { return false }
+        return showsWatermarkWhileEditing(document.id)
+    }
+
+    func showsWatermarkWhileEditing(_ id: UUID) -> Bool {
+        _ = watermarkRevision
+        return Self.showsWatermarkWhileEditing(id)
+    }
+
+    nonisolated private static func completedIDs() -> [String] {
+        UserDefaults.standard.stringArray(forKey: completedKey) ?? []
     }
 
     nonisolated private static func removedIDs() -> Set<String> {
@@ -179,11 +237,11 @@ struct RemoveTagPaymentSheet: View {
                     .font(.system(size: 40))
                     .foregroundColor(.orange)
 
-                Text("Remove “\(DocumentBranding.tag)”")
+                Text("Remove the watermark")
                     .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
 
-                Text("Pay \(store.priceText) to remove this tag from this document only. Signatures, stamps, and dates stay on the page.")
+                Text("Pay \(store.priceText) for this document only. The watermark comes off this file. Signatures, stamps, and your edits stay.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -196,7 +254,7 @@ struct RemoveTagPaymentSheet: View {
                         if store.isLoading {
                             ProgressView().tint(.white)
                         }
-                        Text("Remove tag — \(store.priceText)")
+                        Text("Remove watermark — \(store.priceText)")
                             .font(.headline)
                     }
                     .frame(maxWidth: .infinity)
@@ -273,7 +331,7 @@ struct RemoveBrandingBanner: View {
         HStack(spacing: 8) {
             Image(systemName: "tag.fill")
                 .font(.caption)
-            Text("Tagged")
+            Text("Watermark")
                 .font(.caption.weight(.semibold))
             Spacer()
             Button("Remove \(store.priceText)") {
@@ -312,7 +370,7 @@ struct RemoveBrandingBanner: View {
                     withAnimation { expanded = false }
                 } label: {
                     HStack {
-                        Text("Tagged “\(DocumentBranding.tag)”")
+                        Text("Pay-per-document watermark")
                             .font(.subheadline.weight(.semibold))
                         Spacer()
                         Image(systemName: "chevron.up")
@@ -321,10 +379,10 @@ struct RemoveBrandingBanner: View {
                 }
                 .foregroundColor(.primary)
             } else {
-                Text("Tagged “\(DocumentBranding.tag)”")
+                Text("Pay-per-document watermark")
                     .font(.subheadline.weight(.semibold))
             }
-            Text("Converted, signed, and scanned files include this small footer. Pay \(store.priceText) to remove it from this document only.")
+            Text("After three edited, signed, or stamped documents, the next one shows “Prepared by DocuTranslate” across the page. Pay \(store.priceText) to remove it from this document only.")
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -336,7 +394,7 @@ struct RemoveBrandingBanner: View {
                     if store.isLoading {
                         ProgressView().tint(.white)
                     }
-                    Text("Remove tag — \(store.priceText)")
+                    Text("Remove watermark — \(store.priceText)")
                         .font(.subheadline.weight(.semibold))
                 }
                 .frame(maxWidth: .infinity)
@@ -372,5 +430,40 @@ struct RemoveBrandingBanner: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+}
+
+struct PaywallWatermarkBadge: View {
+    var canvasSize: CGSize
+    var onClose: () -> Void
+
+    private var layout: DocumentWatermarkLayout {
+        DocumentBranding.layout(for: canvasSize)
+    }
+
+    var body: some View {
+        ZStack {
+            Text(DocumentBranding.tag)
+                .font(.system(size: layout.fontSize, weight: .semibold))
+                .foregroundStyle(Color.black.opacity(0.2))
+                .shadow(color: .white.opacity(0.85), radius: 0, x: 0, y: 1)
+                .lineLimit(1)
+                .fixedSize()
+                .rotationEffect(.degrees(DocumentBranding.angleDegrees))
+                .position(x: canvasSize.width / 2, y: canvasSize.height / 2)
+                .allowsHitTesting(false)
+            Button(action: onClose) {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.red)
+                    .font(.system(size: max(20, layout.close.width * 0.72)))
+                    .frame(width: layout.close.width, height: layout.close.height)
+                    .shadow(color: .black.opacity(0.35), radius: 1, y: 1)
+            }
+            .buttonStyle(.plain)
+            .position(x: layout.close.midX, y: layout.close.midY)
+            .accessibilityLabel("Remove watermark")
+        }
+        .frame(width: canvasSize.width, height: canvasSize.height)
     }
 }

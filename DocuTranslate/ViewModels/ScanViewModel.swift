@@ -181,7 +181,7 @@ class ScanViewModel: ObservableObject {
 
     // MARK: - Export
 
-    func exportToHistory() async -> TranslatedDocument? {
+    func exportToHistory() async -> (TranslatedDocument, [UIImage])? {
         let images = session.pages.map(\.displayImage)
         guard !images.isEmpty else { return nil }
         let doc = TranslatedDocument(
@@ -194,9 +194,8 @@ class ScanViewModel: ObservableObject {
             originalText: "",
             pageCount: session.pages.count
         )
-        HistoryStore.shared.add(doc, images: images, signed: false)
         ReviewPromptService.shared.considerPrompt(after: "scan_export")
-        return doc
+        return (doc, images)
     }
 
     func persistToHistory(signed: Bool, images: [UIImage]? = nil, edited: Bool = false) {

@@ -291,7 +291,11 @@ struct DocumentRowCard: View {
                 RoundedRectangle(cornerRadius: 10)
                     .fill(Color(hex: document.documentType.color).opacity(0.12))
                     .frame(width: 50, height: 60)
-                if let thumb = document.thumbnail {
+                if document.requiresFaceID == true {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 22))
+                        .foregroundColor(Color(hex: document.documentType.color))
+                } else if let thumb = document.thumbnail {
                     Image(uiImage: thumb)
                         .resizable()
                         .scaledToFill()
